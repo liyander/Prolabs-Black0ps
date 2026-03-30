@@ -1,15 +1,4 @@
 #!/usr/bin/env bash
-# =============================================================================
-#  ____  ____   ___  _        _    ____
-# |  _ \|  _ \ / _ \| |      / \  | __ )
-# | |_) | |_) | | | | |     / _ \ |  _ \
-# |  __/|  _ <| |_| | |___ / ___ \| |_) |
-# |_|   |_| \_\\___/|_____/_/   \_\____/
-#
-#  Red Team Infrastructure Deployment Script
-#  Multi-Tier Active Directory Attack Range
-# =============================================================================
-#
 # Usage:
 #   ./deploy.sh                  # Full deployment (all phases)
 #   ./deploy.sh --phase 1        # Phase 1 only: VM provisioning
@@ -238,8 +227,10 @@ validate_prerequisites() {
             log SUCCESS "Disk: ${available_disk}GB available (recommended: 200GB+)"
         elif [[ ${available_disk} -ge 150 ]]; then
             log WARN "Disk: ${available_disk}GB available (recommended: 200GB+)"
+        elif [[ ${available_disk} -ge 70 ]]; then
+            log WARN "Disk: ${available_disk}GB available (Low space, but feasible with Linked Clones!)"
         else
-            log FAIL "Disk: ${available_disk}GB available (INSUFFICIENT - need 150GB+)"
+            log FAIL "Disk: ${available_disk}GB available (INSUFFICIENT - need 70GB+)"
             ((errors++))
         fi
     fi
