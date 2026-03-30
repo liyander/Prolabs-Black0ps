@@ -16,13 +16,13 @@ DMZ_NET       = "192.168.50"
 INTERNAL_NET  = "172.16.50"
 
 # Base box names (built via Packer)
-BOX_UBUNTU      = "prolabs/ubuntu-2204"
-BOX_PFSENSE     = "prolabs/pfsense-ce"
-BOX_WIN2022     = "prolabs/win-server-2022"
-BOX_WIN2019     = "prolabs/win-server-2019"
-BOX_WIN2016     = "prolabs/win-server-2016"
-BOX_WIN10       = "prolabs/win-10-enterprise"
-BOX_WIN11       = "prolabs/win-11-enterprise"
+BOX_UBUNTU      = "bento/ubuntu-22.04"
+BOX_PFSENSE     = "m00nie/pfsense"  # Or another public pfSense/OPNsense box
+BOX_WIN2022     = "gusztavvargadr/windows-server-2022-standard"
+BOX_WIN2019     = "gusztavvargadr/windows-server-2019-standard"
+BOX_WIN2016     = "gusztavvargadr/windows-server-2016-standard"
+BOX_WIN10       = "gusztavvargadr/windows-10"
+BOX_WIN11       = "gusztavvargadr/windows-11"
 
 # ---- Provider Defaults ----
 PROVIDER = ENV['VAGRANT_DEFAULT_PROVIDER'] || 'vmware_desktop'
