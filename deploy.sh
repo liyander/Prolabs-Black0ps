@@ -306,21 +306,21 @@ provision_vm() {
 
     log STEP "Provisioning VM: ${BOLD}${vm_name}${NC}"
 
+    set +e
     if vagrant status "${vm_name}" 2>/dev/null | grep -q "running"; then
         log INFO "${vm_name} is already running, re-provisioning..."
-        (cd "${VAGRANT_DIR}" && vagrant provision "${vm_name}") \
-            >> "${LOG_DIR}/${vm_name}.log" 2>&1 || {
-            log FAIL "Re-provisioning ${vm_name} failed. Last 15 lines of error:"
-            tail -n 15 "${LOG_DIR}/${vm_name}.log" | while read -r line; do echo -e "      ${DIM}${line}${NC}"; done
-            return 1
-        }
+        (cd "${VAGRANT_DIR}" && vagrant provision "${vm_name}") 2>&1 | tee "${LOG_DIR}/${vm_name}.log"
     else
-        (cd "${VAGRANT_DIR}" && vagrant up "${vm_name}" --no-parallel) \
-            >> "${LOG_DIR}/${vm_name}.log" 2>&1 || {
-            log FAIL "Provisioning ${vm_name} failed. Last 15 lines of error:"
-            tail -n 15 "${LOG_DIR}/${vm_name}.log" | while read -r line; do echo -e "      ${DIM}${line}${NC}"; done
-            return 1
-        }
+        log INFO "Downloading boxes and starting ${vm_name} (progress shown below)..."
+        (cd "${VAGRANT_DIR}" && vagrant up "${vm_name}" --no-parallel) 2>&1 | tee "${LOG_DIR}/${vm_name}.log"
+    fi
+    local ec=${PIPESTATUS[0]}
+    set -e
+
+    if [[ ${ec} -ne 0 ]]; then
+        log FAIL "Provisioning ${vm_name} failed. Last 15 lines of error:"
+        tail -n 15 "${LOG_DIR}/${vm_name}.log" | while read -r line; do echo -e "      ${DIM}${line}${NC}"; done
+        return 1
     fi
 
     local elapsed
