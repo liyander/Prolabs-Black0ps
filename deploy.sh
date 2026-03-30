@@ -310,13 +310,15 @@ provision_vm() {
         log INFO "${vm_name} is already running, re-provisioning..."
         (cd "${VAGRANT_DIR}" && vagrant provision "${vm_name}") \
             >> "${LOG_DIR}/${vm_name}.log" 2>&1 || {
-            log FAIL "Re-provisioning ${vm_name} failed (see logs/${vm_name}.log)"
+            log FAIL "Re-provisioning ${vm_name} failed. Last 15 lines of error:"
+            tail -n 15 "${LOG_DIR}/${vm_name}.log" | while read -r line; do echo -e "      ${DIM}${line}${NC}"; done
             return 1
         }
     else
         (cd "${VAGRANT_DIR}" && vagrant up "${vm_name}" --no-parallel) \
             >> "${LOG_DIR}/${vm_name}.log" 2>&1 || {
-            log FAIL "Provisioning ${vm_name} failed (see logs/${vm_name}.log)"
+            log FAIL "Provisioning ${vm_name} failed. Last 15 lines of error:"
+            tail -n 15 "${LOG_DIR}/${vm_name}.log" | while read -r line; do echo -e "      ${DIM}${line}${NC}"; done
             return 1
         }
     fi

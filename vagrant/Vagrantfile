@@ -17,7 +17,7 @@ INTERNAL_NET  = "172.16.50"
 
 # Base box names (built via Packer)
 BOX_UBUNTU      = "bento/ubuntu-22.04"
-BOX_PFSENSE     = "m00nie/pfsense"  # Or another public pfSense/OPNsense box
+BOX_PFSENSE     = "generic/freebsd13"
 BOX_WIN2022     = "gusztavvargadr/windows-server-2022-standard"
 BOX_WIN2019     = "gusztavvargadr/windows-server-2019-standard"
 BOX_WIN2016     = "gusztavvargadr/windows-server-2016-standard"
