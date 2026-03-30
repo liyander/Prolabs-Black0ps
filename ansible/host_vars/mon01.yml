@@ -1,0 +1,97 @@
+---
+# =============================================================================
+# MON01-LINUX - Monitoring Server (LDAP Credential Extraction)
+# =============================================================================
+# Role:        Monitoring dashboard with cleartext LDAP bind creds in config
+# OS:          Ubuntu 22.04 LTS
+# Network:     Internal (172.16.50.40)
+# Attack Path: Phase D, Step 8 (LDAP Extraction)
+# =============================================================================
+
+hostname: mon01-linux
+machine_role: monitoring
+attack_phase: "D8"
+attack_name: "LDAP Bind Credential Extraction"
+
+# Network
+ansible_host: 172.16.50.40
+ansible_connection: ssh
+ansible_become: true
+ansible_become_method: sudo
+network_segment: internal
+gateway: 172.16.50.1
+
+# OS
+os_family: linux
+os_distro: ubuntu
+os_version: "22.04"
+
+# Services
+services:
+  - name: apache2
+    port: 80
+    protocol: tcp
+    description: "Apache serving monitoring dashboard"
+
+# Monitoring Dashboard
+monitoring_dashboard:
+  url: "http://172.16.50.40/monitoring/"
+  document_root: "/var/www/html/monitoring"
+  auth:
+    username: admin
+    password: "MonDashboard@2024"
+    type: "hardcoded PHP session auth"
+  html_hint: '<!-- Config: /etc/corp-monitoring/ldap.conf -->'
+  monitored_hosts:
+    - { name: "DC01",       ip: "172.16.50.10",     role: "Domain Controller" }
+    - { name: "FS01",       ip: "172.16.50.11",     role: "File Server" }
+    - { name: "DB01",       ip: "172.16.50.12",     role: "Database Server" }
+    - { name: "APP01",      ip: "172.16.50.13",     role: "Application Server" }
+    - { name: "WS01",       ip: "172.16.50.21",     role: "Workstation 1" }
+    - { name: "WS02",       ip: "172.16.50.22",     role: "Workstation 2" }
+    - { name: "DEV-LNX01",  ip: "172.16.50.30",     role: "Dev Server" }
+    - { name: "DMZ-WEB01",  ip: "192.168.50.10", role: "Web Server" }
+    - { name: "DMZ-MAIL01", ip: "192.168.50.11", role: "Mail Server" }
+
+# LDAP Configuration (THE vulnerability)
+ldap_config:
+  config_path: "/etc/corp-monitoring/ldap.conf"
+  backup_path: "/opt/.ldap-backup.conf"
+  server: "172.16.50.10"
+  port: 389
+  use_ssl: false
+  base_dn: "DC=corp,DC=local"
+  bind_dn: "CN=svc_monitoring,OU=Service Accounts,DC=corp,DC=local"
+  bind_pw: "M0nitor!ng2024"
+  bind_user_upn: "svc_monitoring@corp.local"
+
+# Vulnerabilities
+vulnerabilities:
+  cleartext_ldap:
+    type: "Cleartext LDAP Bind Credentials"
+    vector: "LDAP config file in /etc/ contains plaintext service account password"
+    severity: critical
+    cvss: 8.6
+    files:
+      - "/etc/corp-monitoring/ldap.conf"
+      - "/opt/.ldap-backup.conf"
+    credential: "svc_monitoring / M0nitor!ng2024"
+    impact: "Full LDAP domain enumeration; potential for further escalation"
+  hardcoded_dashboard:
+    type: "Hardcoded Dashboard Credentials"
+    vector: "PHP login check uses hardcoded admin:MonDashboard@2024"
+    severity: medium
+    cvss: 5.3
+
+# CTF Flags
+flags:
+  root:
+    value: "black0ps{ld4p_cr3ds_3xtr4ct3d}"
+    path: "/root/root.txt"
+    owner: root
+    permissions: "0600"
+
+# Resource allocation
+vm_memory: 2048
+vm_cpus: 1
+vm_gui: false

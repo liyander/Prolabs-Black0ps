@@ -1,0 +1,77 @@
+---
+# =============================================================================
+# Role: delegation
+# Purpose: Configure Constrained Delegation on WS02 targeting DC CIFS
+# =============================================================================
+
+- name: Configure Constrained Delegation on WS02 computer account
+  ansible.windows.win_powershell:
+    script: |
+      # Set WS02 machine account for constrained delegation to DC01's CIFS service
+      $ws02 = Get-ADComputer -Identity "WS02" -ErrorAction Stop
+
+      # Enable constrained delegation with protocol transition (S4U2Self + S4U2Proxy)
+      Set-ADComputer -Identity $ws02 `
+        -Add @{
+          'msDS-AllowedToDelegateTo' = @(
+            "cifs/DC01.{{ domain_name }}",
+            "cifs/DC01"
+          )
+        }
+
+      # Enable TRUSTED_FOR_DELEGATION flag (protocol transition)
+      Set-ADAccountControl -Identity $ws02 -TrustedToAuthForDelegation $true
+
+      Write-Output "Configured WS02 for constrained delegation to DC01 CIFS"
+  ignore_errors: yes
+
+- name: Create a dedicated delegation user on WS02
+  ansible.windows.win_powershell:
+    script: |
+      # Create a user account that also has delegation privileges
+      $username = "svc_ws02"
+      $password = ConvertTo-SecureString "Deleg@te2024!" -AsPlainText -Force
+
+      try {
+        Get-ADUser -Identity $username -ErrorAction Stop
+        Write-Output "User $username already exists"
+      } catch {
+        New-ADUser `
+          -Name $username `
+          -SamAccountName $username `
+          -UserPrincipalName "$username@{{ domain_name }}" `
+          -Path "OU=Service Accounts,DC=corp,DC=local" `
+          -AccountPassword $password `
+          -Enabled $true `
+          -PasswordNeverExpires $true `
+          -Description "WS02 Delegation Service Account"
+
+        # Set constrained delegation on the user account as well
+        Set-ADUser -Identity $username `
+          -Add @{
+            'msDS-AllowedToDelegateTo' = @(
+              "cifs/DC01.{{ domain_name }}",
+              "cifs/DC01",
+              "ldap/DC01.{{ domain_name }}",
+              "ldap/DC01"
+            )
+          }
+
+        Set-ADAccountControl -Identity $username -TrustedToAuthForDelegation $true
+        Write-Output "Created $username with constrained delegation to DC01"
+      }
+
+- name: Verify delegation configuration
+  ansible.windows.win_powershell:
+    script: |
+      # Verify WS02 computer delegation
+      $ws02 = Get-ADComputer -Identity "WS02" -Properties 'msDS-AllowedToDelegateTo', 'TrustedToAuthForDelegation'
+      Write-Output "WS02 Computer Account:"
+      Write-Output "  TrustedToAuthForDelegation: $($ws02.TrustedToAuthForDelegation)"
+      Write-Output "  AllowedToDelegateTo: $($ws02.'msDS-AllowedToDelegateTo' -join ', ')"
+
+      # Verify svc_ws02 user delegation
+      $svcUser = Get-ADUser -Identity "svc_ws02" -Properties 'msDS-AllowedToDelegateTo', 'TrustedToAuthForDelegation'
+      Write-Output "svc_ws02 User Account:"
+      Write-Output "  TrustedToAuthForDelegation: $($svcUser.TrustedToAuthForDelegation)"
+      Write-Output "  AllowedToDelegateTo: $($svcUser.'msDS-AllowedToDelegateTo' -join ', ')"

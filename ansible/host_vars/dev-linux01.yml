@@ -1,0 +1,109 @@
+---
+# =============================================================================
+# DEV-LINUX01 - Development Server (Exposed .git)
+# =============================================================================
+# Role:        Dev server with .git directory exposed via HTTP
+# OS:          Ubuntu 22.04 LTS
+# Network:     Internal (172.16.50.30)
+# Attack Path: Phase B, Step 3 (Credential Harvesting)
+# =============================================================================
+
+hostname: dev-linux01
+machine_role: devserver
+attack_phase: "B3"
+attack_name: "Git History Credential Harvesting"
+
+# Network
+ansible_host: 172.16.50.30
+ansible_connection: ssh
+ansible_become: true
+ansible_become_method: sudo
+network_segment: internal
+gateway: 172.16.50.1
+
+# OS
+os_family: linux
+os_distro: ubuntu
+os_version: "22.04"
+
+# Services
+services:
+  - name: apache2
+    port: 80
+    protocol: tcp
+    description: "Apache serving dev portal (with .git exposed)"
+
+# Web Application
+web_app:
+  name: "Corp Development Portal"
+  document_root: "/var/www/html/corp-portal"
+  directory_listing: true
+  git_exposed: true
+  git_author: "Robert Martinez <r.martinez@corp.local>"
+
+# Git Repository (vulnerability details)
+git_repo:
+  commits:
+    - message: "Initial portal setup"
+      files: ["index.php", "config.php", "README.md"]
+      sensitive: false
+    - message: "Add LDAP authentication configuration"
+      files: ["ldap-config.php"]
+      sensitive: true
+      credentials:
+        - user: "r.martinez"
+          password: "Robert2024!"
+          type: "AD domain user"
+          dn: "CN=Robert Martinez,OU=Dev,OU=Corp Users,DC=corp,DC=local"
+        - user: "svc_webapp@corp.local"
+          password: "W3bApp!Service"
+          type: "AD service account"
+    - message: "Security: move credentials to environment variables"
+      files: ["ldap-config.php"]
+      sensitive: false
+      description: "Credentials removed from working tree but preserved in git history"
+
+# Vulnerabilities
+vulnerabilities:
+  git_exposed:
+    type: "Exposed Git Repository"
+    vector: ".git directory served by Apache (no DirectoryMatch deny rule)"
+    severity: high
+    cvss: 7.5
+    exploit: "git-dumper http://172.16.50.30/.git ./repo"
+    description: "Git history contains AD credentials from a previous commit"
+  credential_disclosure:
+    type: "Hardcoded Credentials in VCS History"
+    vector: "ldap-config.php contains AD user and service account passwords"
+    severity: critical
+    credentials_exposed:
+      - "r.martinez / Robert2024! (domain user → WinRM to WS01)"
+      - "svc_webapp / W3bApp!Service (service account → APP01)"
+  privesc_suid:
+    type: "SUID Binary"
+    vector: "/usr/local/bin/corp-search is a SUID copy of /usr/bin/find"
+    severity: high
+    exploit: "/usr/local/bin/corp-search / -exec /bin/sh -p \\;"
+
+# Local Users
+local_users:
+  - name: devuser
+    shell: /bin/bash
+
+# CTF Flags
+flags:
+  user:
+    value: "black0ps{g1t_cr3d_h4rv3st}"
+    path: "/home/devuser/user.txt"
+    owner: root
+    permissions: "0644"
+  root:
+    value: "black0ps{d3v_s3rv3r_0wn3d}"
+    path: "/root/root.txt"
+    owner: root
+    permissions: "0600"
+
+# Resource allocation
+vm_memory: 2048
+vm_cpus: 1
+vm_gui: false

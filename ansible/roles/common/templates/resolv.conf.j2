@@ -1,0 +1,4 @@
+# DNS resolver configuration - Managed by Ansible
+search {{ domain_name }}
+nameserver {{ domain_controller_ip }}
+nameserver {{ networks.internal.gateway }}

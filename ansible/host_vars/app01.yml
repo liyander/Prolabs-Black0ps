@@ -1,0 +1,96 @@
+---
+# =============================================================================
+# APP01-WIN2016 - Application Server (Kerberoasting Target)
+# =============================================================================
+# Role:        Application server with SPN-registered service account
+# OS:          Windows Server 2016
+# Network:     Internal (172.16.50.13)
+# Attack Path: Phase C, Step 7 (Kerberoasting)
+# =============================================================================
+
+hostname: APP01
+machine_role: app_server
+attack_phase: "C7"
+attack_name: "Kerberoasting Service Account"
+
+# Network
+ansible_host: 172.16.50.13
+ansible_connection: winrm
+ansible_winrm_transport: ntlm
+ansible_winrm_server_cert_validation: ignore
+ansible_port: 5986
+ansible_winrm_scheme: https
+network_segment: internal
+gateway: 172.16.50.1
+
+# OS
+os_family: windows
+os_version: "Windows Server 2016"
+
+# Services
+services:
+  - name: W3SVC
+    port: 80
+    protocol: tcp
+    description: "IIS Web Server"
+  - name: W3SVC
+    port: 8080
+    protocol: tcp
+    description: "IIS Web Server (alt port)"
+  - name: W3SVC
+    port: 443
+    protocol: tcp
+    description: "IIS HTTPS"
+
+# Kerberoasting Configuration
+kerberoasting:
+  target_account: svc_webapp
+  target_password: "W3bApp!Service"
+  spns:
+    - "HTTP/APP01.corp.local"
+    - "HTTP/APP01"
+    - "HTTP/app01.corp.local:8080"
+    - "HTTP/app01.corp.local:443"
+  hashcat_mode: 13100
+  description: "Any domain user can request a TGS for this SPN and crack it offline"
+
+# SMB Signing (disabled for relay)
+smb_signing:
+  server_require: false
+  server_enable: false
+  client_require: false
+  client_enable: false
+  relay_vulnerable: true
+
+# Vulnerabilities
+vulnerabilities:
+  kerberoast:
+    type: "Kerberoasting"
+    vector: "Service account svc_webapp has SPN and crackable password"
+    severity: high
+    cvss: 7.5
+    exploit: "GetUserSPNs.py corp.local/user:pass -dc-ip 172.16.50.10 -request"
+    password: "W3bApp!Service"
+  smb_signing:
+    type: "SMB Signing Disabled"
+    vector: "NTLM relay attacks possible (relay target from FS01 coercion)"
+    severity: medium
+    cvss: 5.9
+
+# CTF Flags
+flags:
+  user:
+    value: "black0ps{k3rb3r04st_cr4ck3d}"
+    path: 'C:\Users\Public\user.txt'
+    owner: Public
+    permissions: "readable"
+  root:
+    value: "black0ps{4pp_s3rv3r_0wn3d}"
+    path: 'C:\Users\Administrator\Desktop\root.txt'
+    owner: Administrator
+    permissions: "admin_only"
+
+# Resource allocation
+vm_memory: 4096
+vm_cpus: 2
+vm_gui: true

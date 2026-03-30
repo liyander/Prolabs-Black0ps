@@ -1,0 +1,144 @@
+---
+# =============================================================================
+# Role: winrm-unquoted-path
+# Target: WS01-WIN10 (172.16.50.21)
+# Purpose: Enable WinRM and create unquoted service path vulnerability
+# =============================================================================
+
+# ---- Enable and Configure WinRM ----
+- name: Enable WinRM service
+  ansible.windows.win_powershell:
+    script: |
+      # Enable WinRM with basic auth for lateral movement
+      winrm quickconfig -force 2>$null
+
+      Set-Item -Path WSMan:\localhost\Service\Auth\Basic -Value $true
+      Set-Item -Path WSMan:\localhost\Service\Auth\Negotiate -Value $true
+      Set-Item -Path WSMan:\localhost\Service\Auth\Kerberos -Value $true
+      Set-Item -Path WSMan:\localhost\Service\AllowUnencrypted -Value $true
+
+      # Allow remote connections from all hosts
+      Set-Item -Path WSMan:\localhost\Client\TrustedHosts -Value "*" -Force
+
+      # Configure HTTP listener
+      $listener = Get-ChildItem WSMan:\localhost\Listener | Where-Object { $_.Keys -contains "Transport=HTTP" }
+      if (-not $listener) {
+        New-Item -Path WSMan:\localhost\Listener -Transport HTTP -Address * -Force
+      }
+
+      Restart-Service WinRM
+      Write-Output "WinRM configured with basic auth and HTTP listener"
+
+- name: Open WinRM firewall ports
+  community.windows.win_firewall_rule:
+    name: "WinRM HTTP"
+    localport: 5985
+    action: allow
+    direction: in
+    protocol: tcp
+    state: present
+    enabled: yes
+
+- name: Open WinRM HTTPS firewall port
+  community.windows.win_firewall_rule:
+    name: "WinRM HTTPS"
+    localport: 5986
+    action: allow
+    direction: in
+    protocol: tcp
+    state: present
+    enabled: yes
+
+# ---- Grant domain users WinRM access ----
+- name: Add domain users to Remote Management Users
+  ansible.windows.win_powershell:
+    script: |
+      try {
+        Add-LocalGroupMember -Group "Remote Management Users" -Member "CORP\Domain Users" -ErrorAction Stop
+        Write-Output "Added Domain Users to Remote Management Users"
+      } catch {
+        Write-Output "May already be added: $_"
+      }
+
+# ---- VULNERABILITY: Unquoted Service Path ----
+- name: Create vulnerable service directory structure
+  ansible.windows.win_file:
+    path: "C:\\Program Files\\Corp Internal\\Update Service\\bin"
+    state: directory
+
+- name: Create dummy service executable
+  ansible.windows.win_copy:
+    dest: "C:\\Program Files\\Corp Internal\\Update Service\\bin\\CorpUpdater.exe"
+    content: |
+      @echo off
+      REM Corp Update Service - Dummy Binary
+      :loop
+      timeout /t 60 /nobreak > nul
+      goto loop
+    # Note: In practice, you'd compile a real binary. This is a placeholder.
+
+- name: Create the vulnerable unquoted service path
+  ansible.windows.win_powershell:
+    script: |
+      # Create service with UNQUOTED path (vulnerability)
+      # The path contains spaces and is NOT wrapped in quotes
+      $serviceName = "CorpUpdateSvc"
+
+      $existing = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+      if ($existing) {
+        Write-Output "Service already exists"
+        return
+      }
+
+      # VULN: Unquoted path with spaces - "C:\Program Files\Corp Internal\Update Service\bin\CorpUpdater.exe"
+      # Windows will try: C:\Program.exe, C:\Program Files\Corp.exe, etc.
+      New-Service -Name $serviceName `
+        -DisplayName "Corp Internal Update Service" `
+        -Description "Corporate internal software update service" `
+        -BinaryPathName "C:\Program Files\Corp Internal\Update Service\bin\CorpUpdater.exe" `
+        -StartupType Automatic
+
+      Write-Output "Created service with unquoted path: C:\Program Files\Corp Internal\Update Service\bin\CorpUpdater.exe"
+
+- name: Verify unquoted path exists
+  ansible.windows.win_powershell:
+    script: |
+      $svc = Get-WmiObject Win32_Service | Where-Object { $_.Name -eq "CorpUpdateSvc" }
+      Write-Output "Service: $($svc.Name)"
+      Write-Output "Path: $($svc.PathName)"
+      Write-Output "Start Mode: $($svc.StartMode)"
+
+      # Verify the path is NOT quoted
+      if ($svc.PathName -notmatch '^"') {
+        Write-Output "[VULN] Service path is UNQUOTED - exploitable!"
+      }
+
+# ---- Make "Corp Internal" directory writable ----
+- name: Set writable permissions on service directory
+  ansible.windows.win_powershell:
+    script: |
+      # Allow authenticated users to write to the parent directory
+      # This enables dropping a "Corp.exe" or similar for exploitation
+      $acl = Get-Acl "C:\Program Files\Corp Internal"
+
+      $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+        "BUILTIN\Users",
+        "Write,Modify",
+        "ContainerInherit,ObjectInherit",
+        "None",
+        "Allow"
+      )
+      $acl.AddAccessRule($rule)
+      Set-Acl "C:\Program Files\Corp Internal" $acl
+
+      Write-Output "Set writable permissions on Corp Internal directory"
+
+# ---- Local admin credentials for post-exploitation ----
+- name: Create local admin with weak password
+  ansible.windows.win_user:
+    name: localadmin
+    password: "L0calAdmin!"
+    groups:
+      - Administrators
+    password_never_expires: yes
+    state: present

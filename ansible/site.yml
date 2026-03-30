@@ -1,0 +1,149 @@
+---
+# =============================================================================
+# Prolab Red Team Infrastructure - Master Playbook
+# Execute: ansible-playbook -i inventories/production/hosts.yml site.yml
+# =============================================================================
+
+# ================================================================
+# Phase 1: Common Setup (All Hosts)
+# ================================================================
+- name: "Phase 1 - Common Configuration"
+  hosts: all
+  gather_facts: true
+  roles:
+    - role: common
+      tags: [common, phase1]
+
+# ================================================================
+# Phase 2: Domain Setup
+# ================================================================
+
+# Step 2a: Promote DC01 to Domain Controller
+- name: "Phase 2a - Domain Controller Promotion"
+  hosts: domain_controllers
+  gather_facts: true
+  roles:
+    - role: domain-controller
+      tags: [dc, phase2]
+
+# Step 2b: Populate AD with users, groups, OUs
+- name: "Phase 2b - AD Population"
+  hosts: domain_controllers
+  gather_facts: true
+  roles:
+    - role: ad-population
+      tags: [ad-pop, phase2]
+
+# Step 2c: Join Windows machines to domain
+- name: "Phase 2c - Domain Join (Servers)"
+  hosts: windows_servers
+  gather_facts: true
+  roles:
+    - role: domain-join
+      tags: [domain-join, phase2]
+
+- name: "Phase 2c - Domain Join (Workstations)"
+  hosts: windows_workstations
+  gather_facts: true
+  roles:
+    - role: domain-join
+      tags: [domain-join, phase2]
+
+# Step 2d: Install AD CS and publish vulnerable templates
+- name: "Phase 2d - AD Certificate Services"
+  hosts: domain_controllers
+  gather_facts: true
+  roles:
+    - role: ad-cs
+      tags: [adcs, phase2]
+
+# Step 2e: Configure SPNs for Kerberoasting
+- name: "Phase 2e - Kerberoasting Setup (APP01)"
+  hosts: domain_controllers
+  gather_facts: true
+  roles:
+    - role: kerberoasting
+      tags: [kerberoast, phase2]
+
+# Step 2f: Configure Constrained Delegation
+- name: "Phase 2f - Constrained Delegation (WS02)"
+  hosts: domain_controllers
+  gather_facts: true
+  roles:
+    - role: delegation
+      tags: [delegation, phase2]
+
+# ================================================================
+# Phase 3: Vulnerability Injection
+# ================================================================
+
+# DMZ Machines
+- name: "Phase 3 - Vulnerable CMS (DMZ-WEB01)"
+  hosts: dmz-web01
+  gather_facts: true
+  roles:
+    - role: vulnerable-cms
+      tags: [vuln-cms, phase3]
+
+- name: "Phase 3 - Mail Server (DMZ-MAIL01)"
+  hosts: dmz-mail01
+  gather_facts: true
+  roles:
+    - role: mail-server
+      tags: [mail, phase3]
+
+# Internal Linux
+- name: "Phase 3 - Exposed Git Repo (DEV-LINUX01)"
+  hosts: dev-linux01
+  gather_facts: true
+  roles:
+    - role: git-exposed
+      tags: [git, phase3]
+
+- name: "Phase 3 - Monitoring with LDAP Creds (MON01)"
+  hosts: mon01-linux
+  gather_facts: true
+  roles:
+    - role: monitoring
+      tags: [monitoring, phase3]
+
+# Internal Windows
+- name: "Phase 3 - WinRM & Unquoted Path (WS01)"
+  hosts: ws01
+  gather_facts: true
+  roles:
+    - role: winrm-unquoted-path
+      tags: [winrm, unquoted, phase3]
+
+- name: "Phase 3 - Print Spooler (FS01)"
+  hosts: fs01
+  gather_facts: true
+  roles:
+    - role: print-spooler
+      tags: [spooler, phase3]
+
+- name: "Phase 3 - SMB Signing Disabled (WS01, APP01)"
+  hosts:
+    - ws01
+    - app01
+  gather_facts: true
+  roles:
+    - role: smb-signing-disabled
+      tags: [smb, phase3]
+
+- name: "Phase 3 - MSSQL Vulnerable (DB01)"
+  hosts: db01
+  gather_facts: true
+  roles:
+    - role: mssql-vulnerable
+      tags: [mssql, phase3]
+
+# ================================================================
+# Phase 4: CTF Flags
+# ================================================================
+- name: "Phase 4 - Distribute CTF Flags"
+  hosts: all
+  gather_facts: true
+  roles:
+    - role: ctf-flags
+      tags: [flags, phase4]

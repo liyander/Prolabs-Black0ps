@@ -1,0 +1,217 @@
+---
+# =============================================================================
+# Role: vulnerable-cms
+# Target: DMZ-WEB01 (192.168.50.10)
+# Purpose: Deploy vulnerable WordPress CMS with RCE/SSRF + SUID/cron privesc
+# =============================================================================
+
+- name: Install LAMP stack prerequisites
+  ansible.builtin.apt:
+    name:
+      - apache2
+      - php
+      - php-mysql
+      - php-curl
+      - php-gd
+      - php-xml
+      - php-mbstring
+      - libapache2-mod-php
+      - mariadb-server
+      - mariadb-client
+      - python3-mysqldb
+      - unzip
+      - curl
+    state: present
+    update_cache: yes
+
+- name: Start and enable Apache
+  ansible.builtin.systemd:
+    name: apache2
+    state: started
+    enabled: yes
+
+- name: Start and enable MariaDB
+  ansible.builtin.systemd:
+    name: mariadb
+    state: started
+    enabled: yes
+
+# ---- Database Setup ----
+- name: Create WordPress database
+  community.mysql.mysql_db:
+    name: wordpress
+    state: present
+    login_unix_socket: /var/run/mysqld/mysqld.sock
+
+- name: Create WordPress DB user
+  community.mysql.mysql_user:
+    name: wpuser
+    password: "Wp@Vulnerable2024!"
+    priv: "wordpress.*:ALL"
+    host: localhost
+    state: present
+    login_unix_socket: /var/run/mysqld/mysqld.sock
+
+# ---- WordPress Installation (Deliberately Outdated/Vulnerable) ----
+- name: Download WordPress 5.7 (known vulnerable version)
+  ansible.builtin.get_url:
+    url: "https://wordpress.org/wordpress-5.7.tar.gz"
+    dest: /tmp/wordpress.tar.gz
+    mode: '0644'
+
+- name: Extract WordPress
+  ansible.builtin.unarchive:
+    src: /tmp/wordpress.tar.gz
+    dest: /var/www/html/
+    remote_src: yes
+    owner: www-data
+    group: www-data
+
+- name: Deploy wp-config.php
+  ansible.builtin.template:
+    src: wp-config.php.j2
+    dest: /var/www/html/wordpress/wp-config.php
+    owner: www-data
+    group: www-data
+    mode: '0644'
+
+- name: Set WordPress permissions (overly permissive for exploitation)
+  ansible.builtin.file:
+    path: /var/www/html/wordpress
+    owner: www-data
+    group: www-data
+    recurse: yes
+    mode: '0777'
+
+# ---- Install vulnerable plugin (RCE vector) ----
+- name: Create vulnerable plugin directory
+  ansible.builtin.file:
+    path: /var/www/html/wordpress/wp-content/plugins/corp-file-manager/
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: '0777'
+
+- name: Deploy vulnerable file manager plugin (RCE via file upload)
+  ansible.builtin.copy:
+    dest: /var/www/html/wordpress/wp-content/plugins/corp-file-manager/corp-file-manager.php
+    owner: www-data
+    group: www-data
+    mode: '0644'
+    content: |
+      <?php
+      /*
+      Plugin Name: Corp File Manager
+      Description: Internal file management tool
+      Version: 1.0.0
+      Author: Corp IT
+      */
+
+      // VULNERABILITY: Unauthenticated file upload - RCE
+      add_action('wp_ajax_nopriv_corp_upload', 'corp_handle_upload');
+      add_action('wp_ajax_corp_upload', 'corp_handle_upload');
+
+      function corp_handle_upload() {
+          $upload_dir = wp_upload_dir();
+          $target = $upload_dir['basedir'] . '/corp-files/';
+          if (!is_dir($target)) { mkdir($target, 0777, true); }
+
+          if (isset($_FILES['file'])) {
+              $filename = basename($_FILES['file']['name']);
+              // VULN: No file type validation
+              move_uploaded_file($_FILES['file']['tmp_name'], $target . $filename);
+              echo json_encode(['success' => true, 'path' => $upload_dir['baseurl'] . '/corp-files/' . $filename]);
+          }
+          wp_die();
+      }
+
+      // VULNERABILITY: SSRF via URL fetch
+      add_action('wp_ajax_nopriv_corp_fetch', 'corp_fetch_url');
+      add_action('wp_ajax_corp_fetch', 'corp_fetch_url');
+
+      function corp_fetch_url() {
+          if (isset($_GET['url'])) {
+              $url = $_GET['url'];
+              // VULN: No URL validation - SSRF
+              $response = file_get_contents($url);
+              echo $response;
+          }
+          wp_die();
+      }
+
+- name: Configure Apache VirtualHost for WordPress
+  ansible.builtin.copy:
+    dest: /etc/apache2/sites-available/wordpress.conf
+    content: |
+      <VirtualHost *:80>
+          ServerName dmz-web01.corp.local
+          DocumentRoot /var/www/html/wordpress
+          <Directory /var/www/html/wordpress>
+              AllowOverride All
+              Require all granted
+          </Directory>
+          ErrorLog ${APACHE_LOG_DIR}/wordpress-error.log
+          CustomLog ${APACHE_LOG_DIR}/wordpress-access.log combined
+      </VirtualHost>
+
+- name: Enable WordPress site and rewrite module
+  ansible.builtin.shell: |
+    a2ensite wordpress.conf
+    a2enmod rewrite
+    a2dissite 000-default.conf
+    systemctl reload apache2
+
+# ---- Privilege Escalation Vectors ----
+
+# SUID Binary (custom vulnerable binary)
+- name: Deploy SUID vulnerable binary
+  ansible.builtin.copy:
+    dest: /usr/local/bin/corp-backup
+    content: |
+      #!/bin/bash
+      # Corp Backup Utility - runs as root
+      # VULN: Uses relative path for tar, exploitable via PATH hijacking
+      tar czf /tmp/backup-$(date +%s).tar.gz $1
+    mode: '4755'
+    owner: root
+    group: root
+
+# Misconfigured root cron job
+- name: Create vulnerable cron job (wildcard injection)
+  ansible.builtin.cron:
+    name: "Corp backup cleanup"
+    minute: "*/5"
+    job: "cd /var/www/html/wordpress/wp-content/uploads && tar czf /tmp/uploads-backup.tar.gz *"
+    user: root
+
+# Writable script called by root cron
+- name: Create writable maintenance script
+  ansible.builtin.copy:
+    dest: /opt/corp-maintenance.sh
+    content: |
+      #!/bin/bash
+      # Corp maintenance script
+      echo "Running maintenance at $(date)" >> /var/log/corp-maintenance.log
+      find /tmp -name "*.tmp" -mtime +7 -delete
+    mode: '0777'
+    owner: root
+    group: root
+
+- name: Add maintenance script to root crontab
+  ansible.builtin.cron:
+    name: "Corp maintenance"
+    minute: "*/3"
+    job: "/opt/corp-maintenance.sh"
+    user: root
+
+- name: Create CMS admin credentials file (password reuse for MAIL01)
+  ansible.builtin.copy:
+    dest: /var/www/html/wordpress/.wp-credentials.bak
+    content: |
+      # WordPress Admin Credentials (DO NOT DELETE)
+      admin:CmsAdmin@2024!
+      # SSH backup user
+      backup:CmsAdmin@2024!
+    mode: '0644'
+    owner: www-data
+    group: www-data

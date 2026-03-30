@@ -1,0 +1,57 @@
+---
+# =============================================================================
+# Role: domain-join
+# Purpose: Join Windows machines to corp.local domain
+# =============================================================================
+
+- name: Ensure DNS points to Domain Controller
+  ansible.windows.win_dns_client:
+    adapter_names: '*'
+    dns_servers:
+      - "{{ domain_controller_ip }}"
+
+- name: Test DNS resolution of domain
+  ansible.windows.win_powershell:
+    script: |
+      $result = Resolve-DnsName -Name "{{ domain_name }}" -Type A -ErrorAction Stop
+      $Ansible.Result = @{ resolved = $true; ip = $result.IPAddress }
+  register: dns_test
+  retries: 5
+  delay: 15
+  until: dns_test is succeeded
+
+- name: Check if already domain-joined
+  ansible.windows.win_powershell:
+    script: |
+      $cs = Get-WmiObject Win32_ComputerSystem
+      $Ansible.Result = @{
+        domain = $cs.Domain
+        joined = ($cs.PartOfDomain -eq $true -and $cs.Domain -eq "{{ domain_name }}")
+      }
+  register: domain_status
+
+- name: Join machine to domain
+  ansible.windows.win_domain_membership:
+    dns_domain_name: "{{ domain_name }}"
+    domain_admin_user: "{{ domain_netbios }}\\Administrator"
+    domain_admin_password: "{{ domain_admin_password }}"
+    state: domain
+    restart: yes
+  when: not domain_status.result.joined
+  register: domain_join_result
+
+- name: Reboot after domain join
+  ansible.windows.win_reboot:
+    reboot_timeout: 600
+    post_reboot_delay: 60
+  when: domain_join_result is changed
+
+- name: Verify domain membership
+  ansible.windows.win_powershell:
+    script: |
+      $cs = Get-WmiObject Win32_ComputerSystem
+      if ($cs.PartOfDomain -and $cs.Domain -eq "{{ domain_name }}") {
+        Write-Output "Successfully joined to {{ domain_name }}"
+      } else {
+        throw "Domain join verification failed!"
+      }

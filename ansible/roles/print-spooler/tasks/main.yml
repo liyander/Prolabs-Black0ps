@@ -1,0 +1,104 @@
+---
+# =============================================================================
+# Role: print-spooler
+# Target: FS01-WIN2019 (172.16.50.11)
+# Purpose: Enable Print Spooler for PrinterBug/PetitPotam coercion attacks
+# =============================================================================
+
+- name: Enable Print Spooler service
+  ansible.windows.win_service:
+    name: Spooler
+    start_mode: auto
+    state: started
+
+- name: Install Print and Document Services feature
+  ansible.windows.win_feature:
+    name: Print-Server
+    state: present
+    include_management_tools: yes
+  register: print_feature
+
+- name: Reboot if required
+  ansible.windows.win_reboot:
+    reboot_timeout: 600
+  when: print_feature.reboot_required | default(false)
+
+- name: Ensure Print Spooler is running after reboot
+  ansible.windows.win_service:
+    name: Spooler
+    start_mode: auto
+    state: started
+
+# ---- Configure file shares ----
+- name: Create shared folder
+  ansible.windows.win_file:
+    path: "C:\\Shares\\CorpFiles"
+    state: directory
+
+- name: Create CorpFiles SMB share
+  ansible.windows.win_powershell:
+    script: |
+      $share = Get-SmbShare -Name "CorpFiles" -ErrorAction SilentlyContinue
+      if (-not $share) {
+        New-SmbShare -Name "CorpFiles" `
+          -Path "C:\Shares\CorpFiles" `
+          -FullAccess "Everyone" `
+          -Description "Corporate shared files"
+        Write-Output "Created CorpFiles share"
+      } else {
+        Write-Output "CorpFiles share already exists"
+      }
+
+- name: Create IT share with sensitive data
+  ansible.windows.win_file:
+    path: "C:\\Shares\\IT"
+    state: directory
+
+- name: Create IT SMB share
+  ansible.windows.win_powershell:
+    script: |
+      $share = Get-SmbShare -Name "IT$" -ErrorAction SilentlyContinue
+      if (-not $share) {
+        New-SmbShare -Name "IT$" `
+          -Path "C:\Shares\IT" `
+          -FullAccess "CORP\IT Admins" `
+          -ReadAccess "CORP\Domain Users" `
+          -Description "IT Department hidden share"
+        Write-Output "Created IT$ hidden share"
+      }
+
+- name: Place sensitive files in IT share
+  ansible.windows.win_copy:
+    dest: "C:\\Shares\\IT\\network-passwords.xlsx.txt"
+    content: |
+      Corp Network Passwords (DO NOT SHARE)
+      =======================================
+      Server      | Username     | Password
+      ----------- | ------------ | ----------------
+      DB01        | sa           | SqlServer@2024!
+      APP01       | svc_webapp   | W3bApp!Service
+      MON01       | admin        | MonDashboard@2024
+
+- name: Open firewall for SMB
+  community.windows.win_firewall_rule:
+    name: "Allow SMB"
+    localport: 445
+    action: allow
+    direction: in
+    protocol: tcp
+    state: present
+    enabled: yes
+
+# ---- Verify Print Spooler is exploitable ----
+- name: Verify Spooler RPC is accessible
+  ansible.windows.win_powershell:
+    script: |
+      $spooler = Get-Service Spooler
+      Write-Output "Print Spooler Status: $($spooler.Status)"
+      Write-Output "Print Spooler Start Type: $($spooler.StartType)"
+
+      # Check if the RPC named pipe exists
+      $pipes = [System.IO.Directory]::GetFiles("\\.\pipe\") | Where-Object { $_ -match "spoolss" }
+      if ($pipes) {
+        Write-Output "[VULN] Spooler named pipe (spoolss) accessible - PrinterBug/PetitPotam exploitable"
+      }

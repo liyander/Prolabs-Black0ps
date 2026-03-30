@@ -1,0 +1,354 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+# =============================================================================
+# Prolab Red Team Infrastructure - Vagrantfile
+# Multi-tier AD Attack Range with Network Segmentation
+# =============================================================================
+
+# ---- Configuration Constants ----
+DOMAIN_NAME       = "corp.local"
+DOMAIN_NETBIOS    = "CORP"
+DOMAIN_ADMIN_PASS = "P@ssw0rd!2024"
+
+# Network Prefixes
+ATTACKER_NET  = "10.10.10"
+DMZ_NET       = "192.168.50"
+INTERNAL_NET  = "172.16.50"
+
+# Base box names (built via Packer)
+BOX_UBUNTU      = "prolabs/ubuntu-2204"
+BOX_PFSENSE     = "prolabs/pfsense-ce"
+BOX_WIN2022     = "prolabs/win-server-2022"
+BOX_WIN2019     = "prolabs/win-server-2019"
+BOX_WIN2016     = "prolabs/win-server-2016"
+BOX_WIN10       = "prolabs/win-10-enterprise"
+BOX_WIN11       = "prolabs/win-11-enterprise"
+
+# ---- Provider Defaults ----
+PROVIDER = ENV['VAGRANT_DEFAULT_PROVIDER'] || 'vmware_desktop'
+
+Vagrant.configure("2") do |config|
+
+  # ================================================================
+  # Global Configuration
+  # ================================================================
+  config.vm.boot_timeout = 600
+  config.vm.communicator = "ssh"
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+
+  # WinRM defaults for Windows guests
+  config.winrm.transport    = :ssl
+  config.winrm.basic_auth_only = true
+  config.winrm.timeout      = 300
+  config.winrm.retry_limit  = 20
+
+  # ================================================================
+  # ROUTER - pfSense (Gateway & Firewall)
+  # ================================================================
+  config.vm.define "router" do |router|
+    router.vm.box = BOX_PFSENSE
+    router.vm.hostname = "router"
+    router.vm.communicator = "ssh"
+    router.ssh.shell = "/bin/sh"
+
+    # Interface em0: Attacker Network (WAN - 10.10.10.1)
+    router.vm.network "private_network",
+      ip: "#{ATTACKER_NET}.1",
+      netmask: "255.255.255.0",
+      virtualbox__intnet: "attacker_net"
+
+    # Interface em1: DMZ Network (OPT1 - 192.168.50.1)
+    router.vm.network "private_network",
+      ip: "#{DMZ_NET}.1",
+      netmask: "255.255.255.0",
+      virtualbox__intnet: "dmz_net"
+
+    # Interface em2: Internal Network (LAN - 172.16.50.1)
+    router.vm.network "private_network",
+      ip: "#{INTERNAL_NET}.1",
+      netmask: "255.255.255.0",
+      virtualbox__intnet: "internal_net"
+
+    router.vm.provider PROVIDER do |v|
+      v.vmx["memsize"]  = "1024" if PROVIDER == 'vmware_desktop'
+      v.vmx["numvcpus"] = "1"    if PROVIDER == 'vmware_desktop'
+      v.memory = 1024
+      v.cpus   = 1
+      v.gui    = false
+    end
+
+    # Provision firewall rules via shell
+    router.vm.provision "shell", path: "scripts/pfsense-rules.sh"
+  end
+
+  # ================================================================
+  # DMZ NETWORK (192.168.50.x)
+  # ================================================================
+
+  # ---- DMZ-WEB01: Vulnerable CMS Server ----
+  config.vm.define "dmz-web01" do |web|
+    web.vm.box = BOX_UBUNTU
+    web.vm.hostname = "dmz-web01"
+
+    web.vm.network "private_network",
+      ip: "#{DMZ_NET}.10",
+      netmask: "255.255.255.0",
+      virtualbox__intnet: "dmz_net"
+
+    web.vm.provider PROVIDER do |v|
+      v.vmx["memsize"]  = "2048" if PROVIDER == 'vmware_desktop'
+      v.vmx["numvcpus"] = "2"    if PROVIDER == 'vmware_desktop'
+      v.memory = 2048
+      v.cpus   = 2
+      v.gui    = false
+    end
+
+    web.vm.provision "shell", inline: <<-SHELL
+      echo "#{DMZ_NET}.1" > /etc/default_gateway
+      ip route del default 2>/dev/null || true
+      ip route add default via #{DMZ_NET}.1
+    SHELL
+  end
+
+  # ---- DMZ-MAIL01: Mail Server ----
+  config.vm.define "dmz-mail01" do |mail|
+    mail.vm.box = BOX_UBUNTU
+    mail.vm.hostname = "dmz-mail01"
+
+    mail.vm.network "private_network",
+      ip: "#{DMZ_NET}.11",
+      netmask: "255.255.255.0",
+      virtualbox__intnet: "dmz_net"
+
+    mail.vm.provider PROVIDER do |v|
+      v.vmx["memsize"]  = "2048" if PROVIDER == 'vmware_desktop'
+      v.vmx["numvcpus"] = "1"    if PROVIDER == 'vmware_desktop'
+      v.memory = 2048
+      v.cpus   = 1
+      v.gui    = false
+    end
+
+    mail.vm.provision "shell", inline: <<-SHELL
+      ip route del default 2>/dev/null || true
+      ip route add default via #{DMZ_NET}.1
+    SHELL
+  end
+
+  # ================================================================
+  # INTERNAL NETWORK (172.16.50.x - corp.local)
+  # ================================================================
+
+  # ---- DC01-WIN2022: Domain Controller ----
+  config.vm.define "dc01" do |dc|
+    dc.vm.box = BOX_WIN2022
+    dc.vm.hostname = "DC01"
+    dc.vm.communicator = "winrm"
+    dc.winrm.username = "vagrant"
+    dc.winrm.password = "vagrant"
+
+    dc.vm.network "private_network",
+      ip: "#{INTERNAL_NET}.10",
+      netmask: "255.255.255.0",
+      virtualbox__intnet: "internal_net"
+
+    dc.vm.provider PROVIDER do |v|
+      v.vmx["memsize"]  = "4096" if PROVIDER == 'vmware_desktop'
+      v.vmx["numvcpus"] = "2"    if PROVIDER == 'vmware_desktop'
+      v.memory = 4096
+      v.cpus   = 2
+      v.gui    = true
+    end
+
+    # Set DNS to self and gateway
+    dc.vm.provision "shell", privileged: true, inline: <<-SHELL
+      netsh interface ip set address "Ethernet 1" static #{INTERNAL_NET}.10 255.255.255.0 #{INTERNAL_NET}.1
+      netsh interface ip set dns "Ethernet 1" static 127.0.0.1
+    SHELL
+  end
+
+  # ---- FS01-WIN2019: File Server ----
+  config.vm.define "fs01" do |fs|
+    fs.vm.box = BOX_WIN2019
+    fs.vm.hostname = "FS01"
+    fs.vm.communicator = "winrm"
+    fs.winrm.username = "vagrant"
+    fs.winrm.password = "vagrant"
+
+    fs.vm.network "private_network",
+      ip: "#{INTERNAL_NET}.11",
+      netmask: "255.255.255.0",
+      virtualbox__intnet: "internal_net"
+
+    fs.vm.provider PROVIDER do |v|
+      v.vmx["memsize"]  = "4096" if PROVIDER == 'vmware_desktop'
+      v.vmx["numvcpus"] = "2"    if PROVIDER == 'vmware_desktop'
+      v.memory = 4096
+      v.cpus   = 2
+      v.gui    = true
+    end
+
+    fs.vm.provision "shell", privileged: true, inline: <<-SHELL
+      netsh interface ip set address "Ethernet 1" static #{INTERNAL_NET}.11 255.255.255.0 #{INTERNAL_NET}.1
+      netsh interface ip set dns "Ethernet 1" static #{INTERNAL_NET}.10
+    SHELL
+  end
+
+  # ---- DB01-WIN2019: Database Server ----
+  config.vm.define "db01" do |db|
+    db.vm.box = BOX_WIN2019
+    db.vm.hostname = "DB01"
+    db.vm.communicator = "winrm"
+    db.winrm.username = "vagrant"
+    db.winrm.password = "vagrant"
+
+    db.vm.network "private_network",
+      ip: "#{INTERNAL_NET}.12",
+      netmask: "255.255.255.0",
+      virtualbox__intnet: "internal_net"
+
+    db.vm.provider PROVIDER do |v|
+      v.vmx["memsize"]  = "4096" if PROVIDER == 'vmware_desktop'
+      v.vmx["numvcpus"] = "2"    if PROVIDER == 'vmware_desktop'
+      v.memory = 4096
+      v.cpus   = 2
+      v.gui    = true
+    end
+
+    db.vm.provision "shell", privileged: true, inline: <<-SHELL
+      netsh interface ip set address "Ethernet 1" static #{INTERNAL_NET}.12 255.255.255.0 #{INTERNAL_NET}.1
+      netsh interface ip set dns "Ethernet 1" static #{INTERNAL_NET}.10
+    SHELL
+  end
+
+  # ---- APP01-WIN2016: Application Server ----
+  config.vm.define "app01" do |app|
+    app.vm.box = BOX_WIN2016
+    app.vm.hostname = "APP01"
+    app.vm.communicator = "winrm"
+    app.winrm.username = "vagrant"
+    app.winrm.password = "vagrant"
+
+    app.vm.network "private_network",
+      ip: "#{INTERNAL_NET}.13",
+      netmask: "255.255.255.0",
+      virtualbox__intnet: "internal_net"
+
+    app.vm.provider PROVIDER do |v|
+      v.vmx["memsize"]  = "4096" if PROVIDER == 'vmware_desktop'
+      v.vmx["numvcpus"] = "2"    if PROVIDER == 'vmware_desktop'
+      v.memory = 4096
+      v.cpus   = 2
+      v.gui    = true
+    end
+
+    app.vm.provision "shell", privileged: true, inline: <<-SHELL
+      netsh interface ip set address "Ethernet 1" static #{INTERNAL_NET}.13 255.255.255.0 #{INTERNAL_NET}.1
+      netsh interface ip set dns "Ethernet 1" static #{INTERNAL_NET}.10
+    SHELL
+  end
+
+  # ---- WS01-WIN10: Workstation 1 ----
+  config.vm.define "ws01" do |ws|
+    ws.vm.box = BOX_WIN10
+    ws.vm.hostname = "WS01"
+    ws.vm.communicator = "winrm"
+    ws.winrm.username = "vagrant"
+    ws.winrm.password = "vagrant"
+
+    ws.vm.network "private_network",
+      ip: "#{INTERNAL_NET}.21",
+      netmask: "255.255.255.0",
+      virtualbox__intnet: "internal_net"
+
+    ws.vm.provider PROVIDER do |v|
+      v.vmx["memsize"]  = "4096" if PROVIDER == 'vmware_desktop'
+      v.vmx["numvcpus"] = "2"    if PROVIDER == 'vmware_desktop'
+      v.memory = 4096
+      v.cpus   = 2
+      v.gui    = true
+    end
+
+    ws.vm.provision "shell", privileged: true, inline: <<-SHELL
+      netsh interface ip set address "Ethernet 1" static #{INTERNAL_NET}.21 255.255.255.0 #{INTERNAL_NET}.1
+      netsh interface ip set dns "Ethernet 1" static #{INTERNAL_NET}.10
+    SHELL
+  end
+
+  # ---- WS02-WIN11: Workstation 2 ----
+  config.vm.define "ws02" do |ws|
+    ws.vm.box = BOX_WIN11
+    ws.vm.hostname = "WS02"
+    ws.vm.communicator = "winrm"
+    ws.winrm.username = "vagrant"
+    ws.winrm.password = "vagrant"
+
+    ws.vm.network "private_network",
+      ip: "#{INTERNAL_NET}.22",
+      netmask: "255.255.255.0",
+      virtualbox__intnet: "internal_net"
+
+    ws.vm.provider PROVIDER do |v|
+      v.vmx["memsize"]  = "4096" if PROVIDER == 'vmware_desktop'
+      v.vmx["numvcpus"] = "2"    if PROVIDER == 'vmware_desktop'
+      v.memory = 4096
+      v.cpus   = 2
+      v.gui    = true
+    end
+
+    ws.vm.provision "shell", privileged: true, inline: <<-SHELL
+      netsh interface ip set address "Ethernet 1" static #{INTERNAL_NET}.22 255.255.255.0 #{INTERNAL_NET}.1
+      netsh interface ip set dns "Ethernet 1" static #{INTERNAL_NET}.10
+    SHELL
+  end
+
+  # ---- DEV-LINUX01: Dev Server ----
+  config.vm.define "dev-linux01" do |dev|
+    dev.vm.box = BOX_UBUNTU
+    dev.vm.hostname = "dev-linux01"
+
+    dev.vm.network "private_network",
+      ip: "#{INTERNAL_NET}.30",
+      netmask: "255.255.255.0",
+      virtualbox__intnet: "internal_net"
+
+    dev.vm.provider PROVIDER do |v|
+      v.vmx["memsize"]  = "2048" if PROVIDER == 'vmware_desktop'
+      v.vmx["numvcpus"] = "1"    if PROVIDER == 'vmware_desktop'
+      v.memory = 2048
+      v.cpus   = 1
+      v.gui    = false
+    end
+
+    dev.vm.provision "shell", inline: <<-SHELL
+      ip route del default 2>/dev/null || true
+      ip route add default via #{INTERNAL_NET}.1
+      echo "nameserver #{INTERNAL_NET}.10" > /etc/resolv.conf
+    SHELL
+  end
+
+  # ---- MON01-LINUX: Monitoring Server ----
+  config.vm.define "mon01" do |mon|
+    mon.vm.box = BOX_UBUNTU
+    mon.vm.hostname = "mon01-linux"
+
+    mon.vm.network "private_network",
+      ip: "#{INTERNAL_NET}.40",
+      netmask: "255.255.255.0",
+      virtualbox__intnet: "internal_net"
+
+    mon.vm.provider PROVIDER do |v|
+      v.vmx["memsize"]  = "2048" if PROVIDER == 'vmware_desktop'
+      v.vmx["numvcpus"] = "1"    if PROVIDER == 'vmware_desktop'
+      v.memory = 2048
+      v.cpus   = 1
+      v.gui    = false
+    end
+
+    mon.vm.provision "shell", inline: <<-SHELL
+      ip route del default 2>/dev/null || true
+      ip route add default via #{INTERNAL_NET}.1
+      echo "nameserver #{INTERNAL_NET}.10" > /etc/resolv.conf
+    SHELL
+  end
+
+end

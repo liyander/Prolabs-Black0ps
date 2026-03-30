@@ -1,0 +1,216 @@
+---
+# =============================================================================
+# Role: mssql-vulnerable
+# Target: DB01-WIN2019 (172.16.50.12)
+# Purpose: Install MSSQL with xp_cmdshell enabled and a crackable SA/service account
+# =============================================================================
+
+- name: Create MSSQL installation directory
+  ansible.windows.win_file:
+    path: "C:\\SQLInstall"
+    state: directory
+
+# ---- Download SQL Server Express ----
+- name: Download SQL Server 2019 Express
+  ansible.windows.win_powershell:
+    script: |
+      $installerPath = "C:\SQLInstall\SQL2019-SSEI-Expr.exe"
+      if (Test-Path $installerPath) {
+        Write-Output "SQL Server installer already downloaded"
+        return
+      }
+
+      [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+      $url = "https://go.microsoft.com/fwlink/?linkid=866658"
+
+      try {
+        Invoke-WebRequest -Uri $url -OutFile $installerPath -UseBasicParsing
+        Write-Output "Downloaded SQL Server Express installer"
+      } catch {
+        Write-Output "Download failed: $_"
+      }
+  register: sql_download
+
+- name: Download SQL Server media (full installer)
+  ansible.windows.win_powershell:
+    script: |
+      $mediaPath = "C:\SQLInstall\SQLMedia"
+      if (Test-Path "$mediaPath\setup.exe") {
+        Write-Output "SQL Server media already extracted"
+        return
+      }
+
+      Start-Process -FilePath "C:\SQLInstall\SQL2019-SSEI-Expr.exe" `
+        -ArgumentList "/Action=Download", "/MediaPath=$mediaPath", "/MediaType=Core", "/Quiet" `
+        -Wait -NoNewWindow
+
+      Write-Output "SQL Server media downloaded"
+  ignore_errors: yes
+  register: sql_media
+
+# ---- Install SQL Server ----
+- name: Install SQL Server Express
+  ansible.windows.win_powershell:
+    script: |
+      $instance = Get-Service -Name "MSSQL`$SQLEXPRESS" -ErrorAction SilentlyContinue
+      if ($instance) {
+        Write-Output "SQL Server already installed"
+        return
+      }
+
+      $setupPath = Get-ChildItem -Path "C:\SQLInstall" -Recurse -Filter "setup.exe" | Select-Object -First 1
+
+      if (-not $setupPath) {
+        Write-Output "Setup.exe not found, attempting direct install..."
+        $setupPath = @{FullName = "C:\SQLInstall\SQL2019-SSEI-Expr.exe"}
+      }
+
+      $saPassword = "SqlServer@2024!"
+
+      $args = @(
+        "/Q",
+        "/ACTION=Install",
+        "/FEATURES=SQLEngine",
+        "/INSTANCENAME=SQLEXPRESS",
+        "/SECURITYMODE=SQL",
+        "/SAPWD=$saPassword",
+        "/SQLSVCACCOUNT=`"NT AUTHORITY\SYSTEM`"",
+        "/SQLSYSADMINACCOUNTS=`"BUILTIN\Administrators`"",
+        "/TCPENABLED=1",
+        "/NPENABLED=1",
+        "/IACCEPTSQLSERVERLICENSETERMS"
+      )
+
+      Start-Process -FilePath $setupPath.FullName -ArgumentList $args -Wait -NoNewWindow
+      Write-Output "SQL Server installation completed"
+  ignore_errors: yes
+  register: sql_install
+
+- name: Ensure SQL Server is running
+  ansible.windows.win_service:
+    name: "MSSQL$SQLEXPRESS"
+    start_mode: auto
+    state: started
+  ignore_errors: yes
+
+- name: Enable SQL Server Browser
+  ansible.windows.win_service:
+    name: SQLBrowser
+    start_mode: auto
+    state: started
+  ignore_errors: yes
+
+# ---- Enable TCP/IP for remote connections ----
+- name: Configure SQL Server for remote TCP connections
+  ansible.windows.win_powershell:
+    script: |
+      # Enable TCP/IP protocol
+      Import-Module SQLPS -DisableNameChecking -ErrorAction SilentlyContinue
+
+      $wmi = New-Object Microsoft.SqlServer.Management.Smo.Wmi.ManagedComputer
+      $tcp = $wmi.ServerInstances['SQLEXPRESS'].ServerProtocols['Tcp']
+      $tcp.IsEnabled = $true
+      $tcp.Alter()
+
+      # Set TCP port to 1433
+      $ipAll = $tcp.IPAddresses | Where-Object { $_.Name -eq "IPAll" }
+      $ipAll.IPAddressProperties['TcpPort'].Value = "1433"
+      $ipAll.IPAddressProperties['TcpDynamicPorts'].Value = ""
+      $tcp.Alter()
+
+      Restart-Service "MSSQL`$SQLEXPRESS" -Force
+      Write-Output "SQL Server configured for TCP on port 1433"
+  ignore_errors: yes
+
+# ---- VULNERABILITY: Enable xp_cmdshell ----
+- name: Enable xp_cmdshell and configure SA
+  ansible.windows.win_powershell:
+    script: |
+      $saPassword = "SqlServer@2024!"
+
+      $query = @"
+      -- Enable advanced options
+      EXEC sp_configure 'show advanced options', 1;
+      RECONFIGURE;
+
+      -- Enable xp_cmdshell
+      EXEC sp_configure 'xp_cmdshell', 1;
+      RECONFIGURE;
+
+      -- Enable OLE Automation (for additional attack surface)
+      EXEC sp_configure 'Ole Automation Procedures', 1;
+      RECONFIGURE;
+
+      -- Create login for domain service account
+      IF NOT EXISTS (SELECT * FROM sys.server_principals WHERE name = 'CORP\svc_mssql')
+      BEGIN
+        CREATE LOGIN [CORP\svc_mssql] FROM WINDOWS;
+        ALTER SERVER ROLE sysadmin ADD MEMBER [CORP\svc_mssql];
+      END
+
+      -- Create SQL login with weak password
+      IF NOT EXISTS (SELECT * FROM sys.server_principals WHERE name = 'dbadmin')
+      BEGIN
+        CREATE LOGIN [dbadmin] WITH PASSWORD = '$saPassword';
+        ALTER SERVER ROLE sysadmin ADD MEMBER [dbadmin];
+      END
+
+      -- Enable Mixed Mode authentication
+      EXEC xp_instance_regwrite N'HKEY_LOCAL_MACHINE',
+        N'Software\Microsoft\MSSQLServer\MSSQLServer',
+        N'LoginMode', REG_DWORD, 2;
+
+      PRINT 'xp_cmdshell enabled, service accounts configured'
+      "@
+
+      Invoke-Sqlcmd -Query $query -ServerInstance "localhost\SQLEXPRESS" -TrustServerCertificate
+      Write-Output "SQL Server vulnerability configuration complete"
+  ignore_errors: yes
+
+# ---- Create sample database with sensitive data ----
+- name: Create sample corporate database
+  ansible.windows.win_powershell:
+    script: |
+      $query = @"
+      IF NOT EXISTS (SELECT * FROM sys.databases WHERE name = 'CorpDB')
+      BEGIN
+        CREATE DATABASE CorpDB;
+      END
+      GO
+
+      USE CorpDB;
+      GO
+
+      IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'employees')
+      BEGIN
+        CREATE TABLE employees (
+          id INT IDENTITY(1,1) PRIMARY KEY,
+          username NVARCHAR(50),
+          full_name NVARCHAR(100),
+          email NVARCHAR(100),
+          password_hash NVARCHAR(200),
+          department NVARCHAR(50),
+          is_admin BIT DEFAULT 0
+        );
+
+        INSERT INTO employees VALUES
+          ('j.smith', 'John Smith', 'j.smith@corp.local', 'Welcome1!', 'IT', 1),
+          ('a.davis', 'Alice Davis', 'a.davis@corp.local', 'Corp@2024', 'IT', 1),
+          ('s.johnson', 'Sarah Johnson', 's.johnson@corp.local', 'Summer2024!', 'HR', 0),
+          ('d.wilson', 'David Wilson', 'd.wilson@corp.local', 'Winter2024!', 'Management', 0);
+      END
+      "@
+
+      Invoke-Sqlcmd -Query $query -ServerInstance "localhost\SQLEXPRESS" -TrustServerCertificate
+      Write-Output "Corp database created with sensitive data"
+  ignore_errors: yes
+
+- name: Open MSSQL firewall port
+  community.windows.win_firewall_rule:
+    name: "MSSQL TCP 1433"
+    localport: 1433
+    action: allow
+    direction: in
+    protocol: tcp
+    state: present
+    enabled: yes

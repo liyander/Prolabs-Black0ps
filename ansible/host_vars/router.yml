@@ -1,0 +1,75 @@
+---
+# =============================================================================
+# Router - pfSense/OPNsense Virtual Router
+# =============================================================================
+# Role:        Gateway & Firewall (network segmentation enforcement)
+# OS:          pfSense CE / OPNsense
+# Interfaces:
+#   em0 (WAN):  10.10.10.1/24   - Attacker Network
+#   em1 (OPT1): 192.168.50.1/24 - DMZ Network
+#   em2 (LAN):  172.16.50.1/24     - Internal Network
+# =============================================================================
+
+hostname: router
+machine_role: gateway
+
+# Network interfaces
+interfaces:
+  wan:
+    name: em0
+    ip: 10.10.10.1
+    netmask: 255.255.255.0
+    network: attacker
+    description: "Attacker Network (WAN)"
+  dmz:
+    name: em1
+    ip: 192.168.50.1
+    netmask: 255.255.255.0
+    network: dmz
+    description: "DMZ Network (OPT1)"
+  lan:
+    name: em2
+    ip: 172.16.50.1
+    netmask: 255.255.255.0
+    network: internal
+    description: "Internal Network (LAN)"
+
+# Firewall rules
+firewall_rules:
+  - name: "Allow Attacker to DMZ"
+    source: "10.10.10.0/24"
+    destination: "192.168.50.0/24"
+    action: pass
+    protocol: any
+
+  - name: "Block Attacker to Internal"
+    source: "10.10.10.0/24"
+    destination: "172.16.50.0/24"
+    action: block
+    protocol: any
+    quick: true
+
+  - name: "Allow DMZ to Internal (TCP services)"
+    source: "192.168.50.0/24"
+    destination: "172.16.50.0/24"
+    action: pass
+    protocol: tcp
+    ports: [53, 88, 135, 139, 389, 445, 636, 1433, 3389, 5985, 5986, 80, 443, 8080, 8443]
+
+  - name: "Allow DMZ to Internal (UDP services)"
+    source: "192.168.50.0/24"
+    destination: "172.16.50.0/24"
+    action: pass
+    protocol: udp
+    ports: [53, 88, 123, 137, 138, 389]
+
+  - name: "Allow Internal to DMZ"
+    source: "172.16.50.0/24"
+    destination: "192.168.50.0/24"
+    action: pass
+    protocol: any
+
+# Resource allocation
+vm_memory: 1024
+vm_cpus: 1
+vm_gui: false

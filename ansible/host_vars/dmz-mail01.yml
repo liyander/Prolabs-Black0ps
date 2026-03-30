@@ -1,0 +1,107 @@
+---
+# =============================================================================
+# DMZ-MAIL01 - Mail Server & Pivot Point
+# =============================================================================
+# Role:        Persistence & network pivot into internal network
+# OS:          Ubuntu 22.04 LTS
+# Network:     DMZ (192.168.50.11)
+# Attack Path: Phase A, Step 2 (Pivot)
+# =============================================================================
+
+hostname: dmz-mail01
+machine_role: mailserver
+attack_phase: "A2"
+attack_name: "Persistence & Pivot via Password Reuse"
+
+# Network
+ansible_host: 192.168.50.11
+ansible_connection: ssh
+ansible_become: true
+ansible_become_method: sudo
+network_segment: dmz
+gateway: 192.168.50.1
+
+# OS
+os_family: linux
+os_distro: ubuntu
+os_version: "22.04"
+
+# Services
+services:
+  - name: sshd
+    port: 22
+    protocol: tcp
+    description: "OpenSSH (password auth enabled)"
+  - name: postfix
+    port: 25
+    protocol: tcp
+    description: "Postfix SMTP"
+  - name: dovecot
+    port: 143
+    protocol: tcp
+    description: "Dovecot IMAP"
+
+# Vulnerabilities
+vulnerabilities:
+  password_reuse:
+    type: "Credential Reuse"
+    vector: "backup user has same password as CMS admin on DMZ-WEB01"
+    severity: high
+    source_host: dmz-web01
+    username: backup
+    password: "CmsAdmin@2024!"
+  ssh_pivot:
+    type: "Network Pivot"
+    vector: "SSH dynamic port forwarding / Chisel SOCKS proxy"
+    severity: critical
+    description: "Allows routing traffic into 172.16.50.0/24 internal network"
+  privesc_writable:
+    type: "Writable Root Script"
+    vector: "/opt/mail-processor.sh is world-writable and run by root cron every 2 min"
+    severity: high
+
+# Users
+local_users:
+  - name: backup
+    password: "CmsAdmin@2024!"
+    groups: [sudo]
+    shell: /bin/bash
+    home_files:
+      - path: ".internal_notes.txt"
+        description: "Network topology breadcrumb for attacker"
+  - name: mailadmin
+    password: "M@ilAdmin2024"
+    shell: /bin/bash
+
+# SSH Configuration (deliberately weak)
+ssh_config:
+  PasswordAuthentication: "yes"
+  PermitRootLogin: "yes"
+  AllowTcpForwarding: "yes"
+  GatewayPorts: "yes"
+  PermitTunnel: "yes"
+
+# Pivot tools
+pivot_tools:
+  - chisel
+  - socat
+  - ncat
+  - proxychains4
+
+# CTF Flags
+flags:
+  user:
+    value: "black0ps{m41l_s3rv3r_4cc3ss}"
+    path: "/home/backup/user.txt"
+    owner: backup
+    permissions: "0644"
+  root:
+    value: "black0ps{m41l_p1v0t_p01nt}"
+    path: "/root/root.txt"
+    owner: root
+    permissions: "0600"
+
+# Resource allocation
+vm_memory: 2048
+vm_cpus: 1
+vm_gui: false

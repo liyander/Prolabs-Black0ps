@@ -1,0 +1,113 @@
+---
+# =============================================================================
+# WS01-WIN10 - Workstation 1 (Windows Entry Point)
+# =============================================================================
+# Role:        First Windows foothold via WinRM + unquoted service path privesc
+# OS:          Windows 10 Enterprise
+# Network:     Internal (172.16.50.21)
+# Attack Path: Phase B, Step 4 (Windows Entry)
+# =============================================================================
+
+hostname: WS01
+machine_role: workstation
+attack_phase: "B4"
+attack_name: "WinRM Foothold & Unquoted Service Path"
+
+# Network
+ansible_host: 172.16.50.21
+ansible_connection: winrm
+ansible_winrm_transport: ntlm
+ansible_winrm_server_cert_validation: ignore
+ansible_port: 5986
+ansible_winrm_scheme: https
+network_segment: internal
+gateway: 172.16.50.1
+
+# OS
+os_family: windows
+os_version: "Windows 10 Enterprise"
+
+# Services
+services:
+  - name: WinRM
+    port: 5985
+    protocol: tcp
+    description: "WinRM HTTP (basic auth enabled)"
+  - name: WinRM
+    port: 5986
+    protocol: tcp
+    description: "WinRM HTTPS"
+  - name: CorpUpdateSvc
+    description: "Vulnerable unquoted service path"
+    start_mode: auto
+    binary_path: 'C:\Program Files\Corp Internal\Update Service\bin\CorpUpdater.exe'
+    vulnerability: true
+
+# WinRM Configuration (deliberately permissive)
+winrm_config:
+  basic_auth: true
+  negotiate_auth: true
+  kerberos_auth: true
+  allow_unencrypted: true
+  trusted_hosts: "*"
+  http_listener: true
+  remote_management_users:
+    - 'CORP\Domain Users'
+
+# SMB Signing (disabled for relay)
+smb_signing:
+  server_require: false
+  server_enable: false
+  client_require: false
+  client_enable: false
+  relay_vulnerable: true
+
+# Local Users
+local_users:
+  - name: localadmin
+    password: "L0calAdmin!"
+    groups: [Administrators]
+
+# Vulnerabilities
+vulnerabilities:
+  winrm_access:
+    type: "Remote Management Access"
+    vector: "WinRM enabled with basic auth; Domain Users in Remote Management Users"
+    severity: high
+    cvss: 7.2
+    credentials:
+      - user: "r.martinez"
+        password: "Robert2024!"
+        source: "DEV-LINUX01 git history"
+    exploit: "evil-winrm -i 172.16.50.21 -u r.martinez -p 'Robert2024!'"
+  unquoted_service_path:
+    type: "Unquoted Service Path"
+    vector: 'CorpUpdateSvc binary path is unquoted with spaces'
+    severity: high
+    cvss: 7.8
+    service_name: "CorpUpdateSvc"
+    binary_path: 'C:\Program Files\Corp Internal\Update Service\bin\CorpUpdater.exe'
+    exploit_path: 'C:\Program Files\Corp Internal\Corp.exe'
+    description: "Write payload to Corp.exe in the writable directory"
+  smb_signing:
+    type: "SMB Signing Disabled"
+    vector: "NTLM relay target from FS01 coercion"
+    severity: medium
+
+# CTF Flags
+flags:
+  user:
+    value: "black0ps{w1nr3m_f00th0ld}"
+    path: 'C:\Users\Public\user.txt'
+    owner: Public
+    permissions: "readable"
+  root:
+    value: "black0ps{unqu0t3d_p4th_pr1v3sc}"
+    path: 'C:\Users\Administrator\Desktop\root.txt'
+    owner: Administrator
+    permissions: "admin_only"
+
+# Resource allocation
+vm_memory: 4096
+vm_cpus: 2
+vm_gui: true

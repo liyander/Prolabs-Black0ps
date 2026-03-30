@@ -1,0 +1,205 @@
+---
+# =============================================================================
+# Role: ctf-flags
+# Target: All machines
+# Purpose: Distribute user.txt and root.txt flags across all 10 machines
+# =============================================================================
+
+# ================================================================
+# Linux Hosts - DMZ
+# ================================================================
+- name: "DMZ-WEB01: Place user.txt"
+  ansible.builtin.copy:
+    dest: /home/www-data/user.txt
+    content: "{{ ctf_flags.dmz_web01.user }}\n"
+    owner: www-data
+    group: www-data
+    mode: '0644'
+  when: inventory_hostname == 'dmz-web01'
+
+- name: "DMZ-WEB01: Create user home directory"
+  ansible.builtin.file:
+    path: /home/www-data
+    state: directory
+    owner: www-data
+    group: www-data
+  when: inventory_hostname == 'dmz-web01'
+
+- name: "DMZ-WEB01: Place root.txt"
+  ansible.builtin.copy:
+    dest: /root/root.txt
+    content: "{{ ctf_flags.dmz_web01.root }}\n"
+    owner: root
+    group: root
+    mode: '0600'
+  when: inventory_hostname == 'dmz-web01'
+
+- name: "DMZ-MAIL01: Place user.txt"
+  ansible.builtin.copy:
+    dest: /home/backup/user.txt
+    content: "{{ ctf_flags.dmz_mail01.user }}\n"
+    owner: backup
+    group: backup
+    mode: '0644'
+  when: inventory_hostname == 'dmz-mail01'
+
+- name: "DMZ-MAIL01: Place root.txt"
+  ansible.builtin.copy:
+    dest: /root/root.txt
+    content: "{{ ctf_flags.dmz_mail01.root }}\n"
+    owner: root
+    group: root
+    mode: '0600'
+  when: inventory_hostname == 'dmz-mail01'
+
+# ================================================================
+# Linux Hosts - Internal
+# ================================================================
+- name: "DEV-LINUX01: Place user.txt"
+  ansible.builtin.copy:
+    dest: /home/devuser/user.txt
+    content: "{{ ctf_flags.dev_linux01.user }}\n"
+    owner: root
+    group: root
+    mode: '0644'
+  when: inventory_hostname == 'dev-linux01'
+
+- name: "DEV-LINUX01: Create devuser"
+  ansible.builtin.user:
+    name: devuser
+    shell: /bin/bash
+  when: inventory_hostname == 'dev-linux01'
+
+- name: "DEV-LINUX01: Place root.txt"
+  ansible.builtin.copy:
+    dest: /root/root.txt
+    content: "{{ ctf_flags.dev_linux01.root }}\n"
+    owner: root
+    group: root
+    mode: '0600'
+  when: inventory_hostname == 'dev-linux01'
+
+- name: "MON01: Place root.txt"
+  ansible.builtin.copy:
+    dest: /root/root.txt
+    content: "{{ ctf_flags.mon01.root }}\n"
+    owner: root
+    group: root
+    mode: '0600'
+  when: inventory_hostname == 'mon01'
+
+# ================================================================
+# Windows Hosts
+# ================================================================
+- name: "WS01: Place user.txt"
+  ansible.windows.win_copy:
+    dest: "C:\\Users\\Public\\user.txt"
+    content: "{{ ctf_flags.ws01.user }}\r\n"
+  when: inventory_hostname == 'ws01'
+
+- name: "WS01: Place root.txt"
+  ansible.windows.win_copy:
+    dest: "C:\\Users\\Administrator\\Desktop\\root.txt"
+    content: "{{ ctf_flags.ws01.root }}\r\n"
+  when: inventory_hostname == 'ws01'
+
+- name: "WS01: Restrict root.txt permissions"
+  ansible.windows.win_powershell:
+    script: |
+      $path = "C:\Users\Administrator\Desktop\root.txt"
+      $acl = Get-Acl $path
+      $acl.SetAccessRuleProtection($true, $false)
+      $adminRule = New-Object System.Security.AccessControl.FileSystemAccessRule("BUILTIN\Administrators", "FullControl", "Allow")
+      $acl.AddAccessRule($adminRule)
+      Set-Acl $path $acl
+  when: inventory_hostname == 'ws01'
+
+- name: "FS01: Place root.txt"
+  ansible.windows.win_copy:
+    dest: "C:\\Users\\Administrator\\Desktop\\root.txt"
+    content: "{{ ctf_flags.fs01.root }}\r\n"
+  when: inventory_hostname == 'fs01'
+
+- name: "FS01: Restrict root.txt"
+  ansible.windows.win_powershell:
+    script: |
+      $path = "C:\Users\Administrator\Desktop\root.txt"
+      $acl = Get-Acl $path
+      $acl.SetAccessRuleProtection($true, $false)
+      $adminRule = New-Object System.Security.AccessControl.FileSystemAccessRule("BUILTIN\Administrators", "FullControl", "Allow")
+      $acl.AddAccessRule($adminRule)
+      Set-Acl $path $acl
+  when: inventory_hostname == 'fs01'
+
+- name: "DB01: Place user.txt"
+  ansible.windows.win_copy:
+    dest: "C:\\Users\\Public\\user.txt"
+    content: "{{ ctf_flags.db01.user }}\r\n"
+  when: inventory_hostname == 'db01'
+
+- name: "DB01: Place root.txt"
+  ansible.windows.win_copy:
+    dest: "C:\\Users\\Administrator\\Desktop\\root.txt"
+    content: "{{ ctf_flags.db01.root }}\r\n"
+  when: inventory_hostname == 'db01'
+
+- name: "APP01: Place user.txt"
+  ansible.windows.win_copy:
+    dest: "C:\\Users\\Public\\user.txt"
+    content: "{{ ctf_flags.app01.user }}\r\n"
+  when: inventory_hostname == 'app01'
+
+- name: "APP01: Place root.txt"
+  ansible.windows.win_copy:
+    dest: "C:\\Users\\Administrator\\Desktop\\root.txt"
+    content: "{{ ctf_flags.app01.root }}\r\n"
+  when: inventory_hostname == 'app01'
+
+- name: "WS02: Place user.txt"
+  ansible.windows.win_copy:
+    dest: "C:\\Users\\Public\\user.txt"
+    content: "{{ ctf_flags.ws02.user }}\r\n"
+  when: inventory_hostname == 'ws02'
+
+- name: "WS02: Place root.txt"
+  ansible.windows.win_copy:
+    dest: "C:\\Users\\Administrator\\Desktop\\root.txt"
+    content: "{{ ctf_flags.ws02.root }}\r\n"
+  when: inventory_hostname == 'ws02'
+
+- name: "DC01: Place root.txt"
+  ansible.windows.win_copy:
+    dest: "C:\\Users\\Administrator\\Desktop\\root.txt"
+    content: "{{ ctf_flags.dc01.root }}\r\n"
+  when: inventory_hostname == 'dc01'
+
+- name: "DC01: Restrict root.txt"
+  ansible.windows.win_powershell:
+    script: |
+      $path = "C:\Users\Administrator\Desktop\root.txt"
+      $acl = Get-Acl $path
+      $acl.SetAccessRuleProtection($true, $false)
+      $adminRule = New-Object System.Security.AccessControl.FileSystemAccessRule("BUILTIN\Administrators", "FullControl", "Allow")
+      $acl.AddAccessRule($adminRule)
+      Set-Acl $path $acl
+  when: inventory_hostname == 'dc01'
+
+# ---- Restrict Windows root.txt (all Windows hosts) ----
+- name: "Restrict root.txt permissions (all Windows)"
+  ansible.windows.win_powershell:
+    script: |
+      $path = "C:\Users\Administrator\Desktop\root.txt"
+      if (Test-Path $path) {
+        $acl = Get-Acl $path
+        $acl.SetAccessRuleProtection($true, $false)
+        $adminRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+          "BUILTIN\Administrators", "FullControl", "Allow")
+        $systemRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+          "NT AUTHORITY\SYSTEM", "FullControl", "Allow")
+        $acl.AddAccessRule($adminRule)
+        $acl.AddAccessRule($systemRule)
+        Set-Acl $path $acl
+        Write-Output "Restricted root.txt on $env:COMPUTERNAME"
+      }
+  when: ansible_os_family == 'Windows'
+  ignore_errors: yes

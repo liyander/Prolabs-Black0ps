@@ -1,0 +1,76 @@
+---
+# =============================================================================
+# Role: common
+# Purpose: Base configuration for all hosts
+# =============================================================================
+- name: Set hostname
+  ansible.builtin.hostname:
+    name: "{{ inventory_hostname }}"
+  when: ansible_os_family != 'Windows'
+
+- name: Update apt cache (Linux)
+  ansible.builtin.apt:
+    update_cache: yes
+    cache_valid_time: 3600
+  when: ansible_os_family == 'Debian'
+
+- name: Install common packages (Linux)
+  ansible.builtin.apt:
+    name:
+      - curl
+      - wget
+      - net-tools
+      - vim
+      - git
+      - python3
+      - python3-pip
+    state: present
+  when: ansible_os_family == 'Debian'
+
+- name: Configure DNS resolution (Linux Internal)
+  ansible.builtin.template:
+    src: resolv.conf.j2
+    dest: /etc/resolv.conf
+    mode: '0644'
+  when:
+    - ansible_os_family != 'Windows'
+    - "'internal' in group_names or 'internal_linux' in group_names"
+
+- name: Disable automatic DNS updates (Linux)
+  ansible.builtin.lineinfile:
+    path: /etc/NetworkManager/NetworkManager.conf
+    regexp: '^dns='
+    line: 'dns=none'
+    insertafter: '[main]'
+  when:
+    - ansible_os_family != 'Windows'
+    - "'internal' in group_names or 'internal_linux' in group_names"
+  ignore_errors: yes
+
+- name: Configure Windows Firewall - Allow WinRM
+  community.windows.win_firewall_rule:
+    name: "Allow WinRM HTTPS"
+    localport: 5986
+    action: allow
+    direction: in
+    protocol: tcp
+    state: present
+    enabled: yes
+  when: ansible_os_family == 'Windows'
+
+- name: Set DNS server on Windows hosts
+  ansible.windows.win_dns_client:
+    adapter_names: '*'
+    dns_servers:
+      - "{{ domain_controller_ip }}"
+  when:
+    - ansible_os_family == 'Windows'
+    - inventory_hostname != 'dc01'
+
+- name: Disable Windows Update (prevent interference)
+  ansible.windows.win_service:
+    name: wuauserv
+    start_mode: disabled
+    state: stopped
+  when: ansible_os_family == 'Windows'
+  ignore_errors: yes

@@ -1,0 +1,47 @@
+---
+# =============================================================================
+# Role: smb-signing-disabled
+# Target: WS01-WIN10, APP01-WIN2016
+# Purpose: Disable SMB signing to allow NTLM relay attacks
+# =============================================================================
+
+- name: Disable SMB signing (require)
+  ansible.windows.win_regedit:
+    path: HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters
+    name: RequireSecuritySignature
+    data: 0
+    type: dword
+
+- name: Disable SMB signing (enable)
+  ansible.windows.win_regedit:
+    path: HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters
+    name: EnableSecuritySignature
+    data: 0
+    type: dword
+
+- name: Disable SMB client signing (require)
+  ansible.windows.win_regedit:
+    path: HKLM:\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters
+    name: RequireSecuritySignature
+    data: 0
+    type: dword
+
+- name: Disable SMB client signing (enable)
+  ansible.windows.win_regedit:
+    path: HKLM:\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters
+    name: EnableSecuritySignature
+    data: 0
+    type: dword
+
+- name: Verify SMB signing is disabled
+  ansible.windows.win_powershell:
+    script: |
+      $serverSign = Get-SmbServerConfiguration | Select-Object RequireSecuritySignature, EnableSecuritySignature
+      $clientSign = Get-SmbClientConfiguration | Select-Object RequireSecuritySignature, EnableSecuritySignature
+
+      Write-Output "SMB Server - Require: $($serverSign.RequireSecuritySignature), Enable: $($serverSign.EnableSecuritySignature)"
+      Write-Output "SMB Client - Require: $($clientSign.RequireSecuritySignature), Enable: $($clientSign.EnableSecuritySignature)"
+
+      if (-not $serverSign.RequireSecuritySignature) {
+        Write-Output "[VULN] SMB signing NOT required - NTLM relay possible!"
+      }

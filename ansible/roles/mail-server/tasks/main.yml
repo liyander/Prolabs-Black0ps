@@ -1,0 +1,139 @@
+---
+# =============================================================================
+# Role: mail-server
+# Target: DMZ-MAIL01 (192.168.50.11)
+# Purpose: SSH accepts reused CMS passwords, acts as pivot point to internal
+# =============================================================================
+
+- name: Install mail server packages
+  ansible.builtin.apt:
+    name:
+      - postfix
+      - dovecot-core
+      - dovecot-imapd
+      - openssh-server
+      - mailutils
+      - socat
+      - chisel
+      - proxychains4
+    state: present
+    update_cache: yes
+  ignore_errors: yes  # chisel may not be in default repos
+
+- name: Install network pivoting tools
+  ansible.builtin.apt:
+    name:
+      - ncat
+      - socat
+      - ssh
+    state: present
+  ignore_errors: yes
+
+# ---- SSH Configuration (Deliberately Weak) ----
+- name: Configure SSH with password authentication
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+  loop:
+    - { regexp: '^#?PasswordAuthentication', line: 'PasswordAuthentication yes' }
+    - { regexp: '^#?PermitRootLogin', line: 'PermitRootLogin yes' }
+    - { regexp: '^#?PubkeyAuthentication', line: 'PubkeyAuthentication yes' }
+    - { regexp: '^#?UsePAM', line: 'UsePAM yes' }
+    - { regexp: '^#?AllowTcpForwarding', line: 'AllowTcpForwarding yes' }
+    - { regexp: '^#?GatewayPorts', line: 'GatewayPorts yes' }
+    - { regexp: '^#?PermitTunnel', line: 'PermitTunnel yes' }
+
+- name: Restart SSH
+  ansible.builtin.systemd:
+    name: sshd
+    state: restarted
+    enabled: yes
+
+# ---- Create user with reused CMS password ----
+- name: Create backup user (reused password from CMS)
+  ansible.builtin.user:
+    name: backup
+    password: "{{ 'CmsAdmin@2024!' | password_hash('sha512') }}"
+    shell: /bin/bash
+    groups: sudo
+    append: yes
+
+- name: Create mail admin user
+  ansible.builtin.user:
+    name: mailadmin
+    password: "{{ 'M@ilAdmin2024' | password_hash('sha512') }}"
+    shell: /bin/bash
+
+# ---- Postfix Configuration ----
+- name: Configure Postfix
+  ansible.builtin.lineinfile:
+    path: /etc/postfix/main.cf
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+  loop:
+    - { regexp: '^myhostname', line: 'myhostname = mail.corp.local' }
+    - { regexp: '^mydomain', line: 'mydomain = corp.local' }
+    - { regexp: '^myorigin', line: 'myorigin = $mydomain' }
+    - { regexp: '^inet_interfaces', line: 'inet_interfaces = all' }
+    - { regexp: '^mydestination', line: 'mydestination = $myhostname, localhost.$mydomain, localhost, $mydomain' }
+  ignore_errors: yes
+
+- name: Start Postfix
+  ansible.builtin.systemd:
+    name: postfix
+    state: restarted
+    enabled: yes
+  ignore_errors: yes
+
+# ---- Internal network routing hint (breadcrumb for attacker) ----
+- name: Place network notes for attacker discovery
+  ansible.builtin.copy:
+    dest: /home/backup/.internal_notes.txt
+    content: |
+      === Corp Network Notes ===
+      Internal subnet: 172.16.50.0/24
+      DC: 172.16.50.10
+      Dev server: 172.16.50.30 (has web interface on port 80)
+      Monitoring: 172.16.50.40
+
+      SSH tunnel command for reference:
+      ssh -D 1080 backup@192.168.50.11
+    owner: backup
+    group: backup
+    mode: '0600'
+
+# ---- Download Chisel for pivoting ----
+- name: Download Chisel binary
+  ansible.builtin.get_url:
+    url: "https://github.com/jpillora/chisel/releases/download/v1.9.1/chisel_1.9.1_linux_amd64.gz"
+    dest: /tmp/chisel.gz
+    mode: '0644'
+  ignore_errors: yes
+
+- name: Extract and install Chisel
+  ansible.builtin.shell: |
+    gunzip -f /tmp/chisel.gz 2>/dev/null || true
+    mv /tmp/chisel /usr/local/bin/chisel 2>/dev/null || true
+    chmod +x /usr/local/bin/chisel 2>/dev/null || true
+  ignore_errors: yes
+
+# ---- Privilege Escalation on MAIL01 ----
+- name: Create mail processing script (writable, run by root cron)
+  ansible.builtin.copy:
+    dest: /opt/mail-processor.sh
+    content: |
+      #!/bin/bash
+      # Process mail queue
+      postqueue -f 2>/dev/null
+      find /var/mail -name "*.tmp" -mtime +1 -delete 2>/dev/null
+    mode: '0777'
+    owner: root
+    group: root
+
+- name: Schedule root cron for mail processing
+  ansible.builtin.cron:
+    name: "Mail queue processor"
+    minute: "*/2"
+    job: "/opt/mail-processor.sh"
+    user: root

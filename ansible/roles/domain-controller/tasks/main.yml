@@ -1,0 +1,101 @@
+---
+# =============================================================================
+# Role: domain-controller
+# Purpose: Promote DC01 to Domain Controller for corp.local
+# =============================================================================
+
+- name: Install AD DS Windows Feature
+  ansible.windows.win_feature:
+    name:
+      - AD-Domain-Services
+      - DNS
+      - RSAT-AD-Tools
+      - RSAT-DNS-Server
+      - GPMC
+    state: present
+    include_management_tools: yes
+  register: ad_feature_result
+
+- name: Reboot after feature installation
+  ansible.windows.win_reboot:
+    reboot_timeout: 600
+  when: ad_feature_result.reboot_required
+
+- name: Check if domain already exists
+  ansible.windows.win_powershell:
+    script: |
+      try {
+        $domain = Get-ADDomain -ErrorAction Stop
+        $Ansible.Result = @{ exists = $true; name = $domain.DNSRoot }
+      } catch {
+        $Ansible.Result = @{ exists = $false; name = "" }
+      }
+  register: domain_check
+  ignore_errors: yes
+
+- name: Promote to Domain Controller
+  ansible.windows.win_powershell:
+    script: |
+      $securePassword = ConvertTo-SecureString "{{ domain_admin_password }}" -AsPlainText -Force
+
+      Install-ADDSForest `
+        -DomainName "{{ domain_name }}" `
+        -DomainNetbiosName "{{ domain_netbios }}" `
+        -SafeModeAdministratorPassword $securePassword `
+        -InstallDns:$true `
+        -CreateDnsDelegation:$false `
+        -DatabasePath "C:\Windows\NTDS" `
+        -LogPath "C:\Windows\NTDS" `
+        -SysvolPath "C:\Windows\SYSVOL" `
+        -ForestMode "{{ domain_functional_level }}" `
+        -DomainMode "{{ domain_functional_level }}" `
+        -NoRebootOnCompletion:$false `
+        -Force:$true `
+        -Confirm:$false
+  when: not (domain_check.result.exists | default(false))
+  register: dcpromo_result
+
+- name: Wait for domain controller reboot
+  ansible.windows.win_reboot:
+    reboot_timeout: 900
+    post_reboot_delay: 120
+  when: dcpromo_result is changed
+
+- name: Verify AD DS is running
+  ansible.windows.win_service:
+    name: NTDS
+    state: started
+  register: ntds_status
+  retries: 5
+  delay: 30
+  until: ntds_status is succeeded
+
+- name: Verify DNS is running
+  ansible.windows.win_service:
+    name: DNS
+    state: started
+
+- name: Configure DNS Forwarders
+  ansible.windows.win_powershell:
+    script: |
+      Set-DnsServerForwarder -IPAddress @("8.8.8.8", "8.8.4.4") -PassThru
+
+- name: Create reverse lookup zone - Internal
+  ansible.windows.win_powershell:
+    script: |
+      $zone = Get-DnsServerZone -Name "50.16.172.in-addr.arpa" -ErrorAction SilentlyContinue
+      if (-not $zone) {
+        Add-DnsServerPrimaryZone -NetworkID "172.16.50.0/24" -ReplicationScope "Forest" -DynamicUpdate "Secure"
+      }
+
+- name: Create reverse lookup zone - DMZ
+  ansible.windows.win_powershell:
+    script: |
+      $zone = Get-DnsServerZone -Name "50.168.192.in-addr.arpa" -ErrorAction SilentlyContinue
+      if (-not $zone) {
+        Add-DnsServerPrimaryZone -NetworkID "192.168.50.0/24" -ReplicationScope "Forest" -DynamicUpdate "Secure"
+      }
+
+- name: Output domain info
+  ansible.builtin.debug:
+    msg: "Domain Controller promoted: {{ domain_name }} ({{ domain_netbios }})"

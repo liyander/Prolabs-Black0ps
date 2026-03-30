@@ -1,0 +1,158 @@
+---
+# =============================================================================
+# Role: ad-population
+# Purpose: Create OUs, Groups, and Users in Active Directory
+# =============================================================================
+
+# ---- Create Organizational Units ----
+- name: Create Organizational Units
+  ansible.windows.win_powershell:
+    script: |
+      $ou = "{{ item }}"
+      $ouParts = $ou -split ','
+      $ouName = ($ouParts[0] -split '=')[1]
+      $ouPath = ($ouParts[1..($ouParts.Length-1)] -join ',')
+
+      try {
+        Get-ADOrganizationalUnit -Identity $ou -ErrorAction Stop
+        Write-Output "OU already exists: $ou"
+      } catch {
+        New-ADOrganizationalUnit -Name $ouName -Path $ouPath -ProtectedFromAccidentalDeletion $false
+        Write-Output "Created OU: $ou"
+      }
+  loop: "{{ ad_ous }}"
+
+# ---- Create Security Groups ----
+- name: Create AD Security Groups
+  ansible.windows.win_powershell:
+    script: |
+      $groupName = "{{ item.name }}"
+      $groupPath = "{{ item.ou }}"
+      $groupScope = "{{ item.scope }}"
+      $groupCategory = "{{ item.category }}"
+
+      try {
+        Get-ADGroup -Identity $groupName -ErrorAction Stop
+        Write-Output "Group already exists: $groupName"
+      } catch {
+        New-ADGroup -Name $groupName `
+          -Path $groupPath `
+          -GroupScope $groupScope `
+          -GroupCategory $groupCategory `
+          -Description "Prolab Lab Group"
+        Write-Output "Created group: $groupName"
+      }
+  loop: "{{ ad_groups }}"
+
+# ---- Create Domain Users ----
+- name: Create AD Users
+  ansible.windows.win_powershell:
+    script: |
+      $username = "{{ item.name }}"
+      $password = ConvertTo-SecureString "{{ item.password }}" -AsPlainText -Force
+
+      try {
+        Get-ADUser -Identity $username -ErrorAction Stop
+        Write-Output "User already exists: $username"
+      } catch {
+        New-ADUser `
+          -Name "{{ item.firstname }} {{ item.lastname }}" `
+          -SamAccountName $username `
+          -UserPrincipalName "$username@{{ domain_name }}" `
+          -GivenName "{{ item.firstname }}" `
+          -Surname "{{ item.lastname }}" `
+          -Path "{{ item.ou }}" `
+          -AccountPassword $password `
+          -Enabled $true `
+          -PasswordNeverExpires $true `
+          -CannotChangePassword $true `
+          -Description "{{ item.description }}"
+        Write-Output "Created user: $username"
+      }
+  loop: "{{ ad_users }}"
+
+# ---- Add Users to Groups ----
+- name: Add users to their groups
+  ansible.windows.win_powershell:
+    script: |
+      $username = "{{ item.0.name }}"
+      $groupName = "{{ item.1 }}"
+
+      try {
+        $member = Get-ADGroupMember -Identity $groupName | Where-Object { $_.SamAccountName -eq $username }
+        if (-not $member) {
+          Add-ADGroupMember -Identity $groupName -Members $username
+          Write-Output "Added $username to $groupName"
+        } else {
+          Write-Output "$username already in $groupName"
+        }
+      } catch {
+        Write-Output "Error adding $username to $groupName: $_"
+      }
+  loop: "{{ ad_users | subelements('groups') }}"
+
+# ---- Create Service Accounts ----
+- name: Create Service Accounts
+  ansible.windows.win_powershell:
+    script: |
+      $username = "{{ item.name }}"
+      $password = ConvertTo-SecureString "{{ item.password }}" -AsPlainText -Force
+
+      try {
+        Get-ADUser -Identity $username -ErrorAction Stop
+        Write-Output "Service account already exists: $username"
+      } catch {
+        New-ADUser `
+          -Name $username `
+          -SamAccountName $username `
+          -UserPrincipalName "$username@{{ domain_name }}" `
+          -Path "{{ item.ou }}" `
+          -AccountPassword $password `
+          -Enabled $true `
+          -PasswordNeverExpires $true `
+          -CannotChangePassword $true `
+          -Description "{{ item.description }}" `
+          -ServicePrincipalNames @("{{ item.spn }}")
+        Write-Output "Created service account: $username with SPN: {{ item.spn }}"
+      }
+  loop: "{{ ad_service_accounts }}"
+  when: item.spn is defined
+
+# ---- Create Service Accounts without SPN ----
+- name: Create Service Accounts (no SPN)
+  ansible.windows.win_powershell:
+    script: |
+      $username = "{{ item.name }}"
+      $password = ConvertTo-SecureString "{{ item.password }}" -AsPlainText -Force
+
+      try {
+        Get-ADUser -Identity $username -ErrorAction Stop
+        Write-Output "Service account already exists: $username"
+      } catch {
+        New-ADUser `
+          -Name $username `
+          -SamAccountName $username `
+          -UserPrincipalName "$username@{{ domain_name }}" `
+          -Path "{{ item.ou }}" `
+          -AccountPassword $password `
+          -Enabled $true `
+          -PasswordNeverExpires $true `
+          -CannotChangePassword $true `
+          -Description "{{ item.description }}"
+        Write-Output "Created service account: $username"
+      }
+  loop: "{{ ad_service_accounts }}"
+  when: item.spn is not defined
+
+- name: Verify AD population
+  ansible.windows.win_powershell:
+    script: |
+      $users = (Get-ADUser -Filter *).Count
+      $groups = (Get-ADGroup -Filter *).Count
+      $ous = (Get-ADOrganizationalUnit -Filter *).Count
+      Write-Output "AD Population Complete: $users users, $groups groups, $ous OUs"
+  register: ad_stats
+
+- name: Display AD statistics
+  ansible.builtin.debug:
+    msg: "{{ ad_stats.output }}"

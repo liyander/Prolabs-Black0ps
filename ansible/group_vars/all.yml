@@ -1,0 +1,213 @@
+---
+# =============================================================================
+# Prolab - Global Variables
+# =============================================================================
+
+# ---- Domain Configuration ----
+domain_name: "corp.local"
+domain_netbios: "CORP"
+domain_admin_user: "Administrator"
+domain_admin_password: "P@ssw0rd!2024"
+domain_functional_level: "WinThreshold"  # Windows Server 2016
+
+# ---- Network Configuration ----
+networks:
+  attacker:
+    subnet: "10.10.10.0/24"
+    gateway: "10.10.10.1"
+  dmz:
+    subnet: "192.168.50.0/24"
+    gateway: "192.168.50.1"
+  internal:
+    subnet: "172.16.50.0/24"
+    gateway: "172.16.50.1"
+    dns: "172.16.50.10"
+
+# ---- AD Users ----
+ad_users:
+  - name: "j.smith"
+    firstname: "John"
+    lastname: "Smith"
+    password: "Welcome1!"
+    ou: "OU=IT,OU=Corp Users,DC=corp,DC=local"
+    groups: ["IT Admins", "Domain Users"]
+    description: "IT Administrator"
+
+  - name: "s.johnson"
+    firstname: "Sarah"
+    lastname: "Johnson"
+    password: "Summer2024!"
+    ou: "OU=HR,OU=Corp Users,DC=corp,DC=local"
+    groups: ["HR", "Domain Users"]
+    description: "HR Manager"
+
+  - name: "m.williams"
+    firstname: "Mike"
+    lastname: "Williams"
+    password: "Passw0rd123"
+    ou: "OU=Finance,OU=Corp Users,DC=corp,DC=local"
+    groups: ["Finance", "Domain Users"]
+    description: "Financial Analyst"
+
+  - name: "a.davis"
+    firstname: "Alice"
+    lastname: "Davis"
+    password: "Corp@2024"
+    ou: "OU=IT,OU=Corp Users,DC=corp,DC=local"
+    groups: ["IT Admins", "Domain Users", "Server Admins"]
+    description: "Senior Systems Administrator"
+
+  - name: "r.martinez"
+    firstname: "Robert"
+    lastname: "Martinez"
+    password: "Robert2024!"
+    ou: "OU=Dev,OU=Corp Users,DC=corp,DC=local"
+    groups: ["Developers", "Domain Users"]
+    description: "Software Developer"
+
+  - name: "l.anderson"
+    firstname: "Lisa"
+    lastname: "Anderson"
+    password: "P@ssword1"
+    ou: "OU=IT,OU=Corp Users,DC=corp,DC=local"
+    groups: ["IT Admins", "Domain Users", "Backup Operators"]
+    description: "Backup Administrator"
+
+  - name: "d.wilson"
+    firstname: "David"
+    lastname: "Wilson"
+    password: "Winter2024!"
+    ou: "OU=Management,OU=Corp Users,DC=corp,DC=local"
+    groups: ["Management", "Domain Users"]
+    description: "VP of Operations"
+
+  - name: "k.taylor"
+    firstname: "Karen"
+    lastname: "Taylor"
+    password: "K@ren2024"
+    ou: "OU=HR,OU=Corp Users,DC=corp,DC=local"
+    groups: ["HR", "Domain Users"]
+    description: "HR Specialist"
+
+# ---- AD Service Accounts ----
+ad_service_accounts:
+  - name: "svc_mssql"
+    password: "SQLServiceP@ss1"
+    ou: "OU=Service Accounts,DC=corp,DC=local"
+    description: "MSSQL Service Account"
+    spn: "MSSQLSvc/DB01.corp.local:1433"
+
+  - name: "svc_webapp"
+    password: "W3bApp!Service"
+    ou: "OU=Service Accounts,DC=corp,DC=local"
+    description: "Web Application Service Account"
+    spn: "HTTP/APP01.corp.local"
+
+  - name: "svc_backup"
+    password: "B@ckup2024!"
+    ou: "OU=Service Accounts,DC=corp,DC=local"
+    description: "Backup Service Account"
+    spn: "cifs/FS01.corp.local"
+
+  - name: "svc_monitoring"
+    password: "M0nitor!ng2024"
+    ou: "OU=Service Accounts,DC=corp,DC=local"
+    description: "Monitoring Service Account - LDAP Bind"
+
+# ---- AD Groups ----
+ad_groups:
+  - name: "IT Admins"
+    ou: "OU=Groups,DC=corp,DC=local"
+    scope: "Global"
+    category: "Security"
+
+  - name: "HR"
+    ou: "OU=Groups,DC=corp,DC=local"
+    scope: "Global"
+    category: "Security"
+
+  - name: "Finance"
+    ou: "OU=Groups,DC=corp,DC=local"
+    scope: "Global"
+    category: "Security"
+
+  - name: "Developers"
+    ou: "OU=Groups,DC=corp,DC=local"
+    scope: "Global"
+    category: "Security"
+
+  - name: "Management"
+    ou: "OU=Groups,DC=corp,DC=local"
+    scope: "Global"
+    category: "Security"
+
+  - name: "Server Admins"
+    ou: "OU=Groups,DC=corp,DC=local"
+    scope: "Global"
+    category: "Security"
+
+  - name: "Backup Operators"
+    ou: "OU=Groups,DC=corp,DC=local"
+    scope: "Global"
+    category: "Security"
+
+# ---- AD Organizational Units ----
+ad_ous:
+  - "OU=Corp Users,DC=corp,DC=local"
+  - "OU=IT,OU=Corp Users,DC=corp,DC=local"
+  - "OU=HR,OU=Corp Users,DC=corp,DC=local"
+  - "OU=Finance,OU=Corp Users,DC=corp,DC=local"
+  - "OU=Dev,OU=Corp Users,DC=corp,DC=local"
+  - "OU=Management,OU=Corp Users,DC=corp,DC=local"
+  - "OU=Service Accounts,DC=corp,DC=local"
+  - "OU=Groups,DC=corp,DC=local"
+  - "OU=Servers,DC=corp,DC=local"
+  - "OU=Workstations,DC=corp,DC=local"
+
+# ---- CTF Flags ----
+ctf_flags:
+  dmz_web01:
+    user: "black0ps{dmz_w3b_f00th0ld_4ch13v3d}"
+    root: "black0ps{dmz_w3b_r00t_pwn3d}"
+  dmz_mail01:
+    user: "black0ps{m41l_s3rv3r_4cc3ss}"
+    root: "black0ps{m41l_p1v0t_p01nt}"
+  dev_linux01:
+    user: "black0ps{g1t_cr3d_h4rv3st}"
+    root: "black0ps{d3v_s3rv3r_0wn3d}"
+  ws01:
+    user: "black0ps{w1nr3m_f00th0ld}"
+    root: "black0ps{unqu0t3d_p4th_pr1v3sc}"
+  fs01:
+    root: "black0ps{pr1nt_sp00l3r_r3l4y}"
+  db01:
+    user: "black0ps{mssql_sh3ll_4cc3ss}"
+    root: "black0ps{xp_cmdsh3ll_syst3m}"
+  app01:
+    user: "black0ps{k3rb3r04st_cr4ck3d}"
+    root: "black0ps{4pp_s3rv3r_0wn3d}"
+  mon01:
+    root: "black0ps{ld4p_cr3ds_3xtr4ct3d}"
+  ws02:
+    user: "black0ps{d3l3g4t10n_4bus3}"
+    root: "black0ps{s1lv3r_t1ck3t_f0rg3d}"
+  dc01:
+    root: "black0ps{d0m41n_4dm1n_dcsync}"
+
+# ---- ADCS Templates (Vulnerable) ----
+adcs_templates:
+  esc1:
+    name: "CorpWebServer"
+    description: "Vulnerable ESC1 - Enrollee supplies subject"
+    key_usage: "digital_signature, key_encipherment"
+    validity_period: "1 year"
+    enrollment_flag: "CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT"
+    authorized_signatures_required: 0
+    enroll_permissions:
+      - "Domain Users"
+
+  esc8:
+    name: "CorpUser"
+    description: "Vulnerable ESC8 - HTTP enrollment endpoint"
+    enable_web_enrollment: true
+    ntlm_relay_target: "http://DC01.corp.local/certsrv/"

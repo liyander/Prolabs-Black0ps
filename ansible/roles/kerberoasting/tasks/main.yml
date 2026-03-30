@@ -1,0 +1,84 @@
+---
+# =============================================================================
+# Role: kerberoasting
+# Purpose: Configure SPNs on APP01 service accounts for Kerberoasting
+# =============================================================================
+
+- name: Set SPN for svc_webapp on APP01
+  ansible.windows.win_powershell:
+    script: |
+      # Ensure the SPN is set for Kerberoasting
+      $spns = @(
+        "HTTP/APP01.{{ domain_name }}",
+        "HTTP/APP01",
+        "HTTP/app01.{{ domain_name }}:8080",
+        "HTTP/app01.{{ domain_name }}:443"
+      )
+
+      foreach ($spn in $spns) {
+        $existing = setspn -Q $spn 2>$null
+        if ($LASTEXITCODE -ne 0 -or $existing -notmatch "svc_webapp") {
+          setspn -A $spn "{{ domain_netbios }}\svc_webapp"
+          Write-Output "Set SPN: $spn -> svc_webapp"
+        } else {
+          Write-Output "SPN already set: $spn"
+        }
+      }
+
+- name: Set SPN for svc_mssql on DB01
+  ansible.windows.win_powershell:
+    script: |
+      $spns = @(
+        "MSSQLSvc/DB01.{{ domain_name }}:1433",
+        "MSSQLSvc/DB01.{{ domain_name }}",
+        "MSSQLSvc/DB01:1433"
+      )
+
+      foreach ($spn in $spns) {
+        $existing = setspn -Q $spn 2>$null
+        if ($LASTEXITCODE -ne 0 -or $existing -notmatch "svc_mssql") {
+          setspn -A $spn "{{ domain_netbios }}\svc_mssql"
+          Write-Output "Set SPN: $spn -> svc_mssql"
+        } else {
+          Write-Output "SPN already set: $spn"
+        }
+      }
+
+- name: Set SPN for svc_backup on FS01
+  ansible.windows.win_powershell:
+    script: |
+      $spns = @(
+        "cifs/FS01.{{ domain_name }}",
+        "cifs/FS01"
+      )
+
+      foreach ($spn in $spns) {
+        $existing = setspn -Q $spn 2>$null
+        if ($LASTEXITCODE -ne 0 -or $existing -notmatch "svc_backup") {
+          setspn -A $spn "{{ domain_netbios }}\svc_backup"
+          Write-Output "Set SPN: $spn -> svc_backup"
+        } else {
+          Write-Output "SPN already set: $spn"
+        }
+      }
+
+- name: Ensure service account passwords are crackable
+  ansible.windows.win_powershell:
+    script: |
+      # Verify that the service accounts have passwords that can be cracked
+      # via Kerberoasting (the passwords are set in ad-population role)
+      $accounts = @("svc_webapp", "svc_mssql", "svc_backup")
+      foreach ($acct in $accounts) {
+        $user = Get-ADUser -Identity $acct -Properties ServicePrincipalNames, PasswordLastSet
+        $spnCount = $user.ServicePrincipalNames.Count
+        Write-Output "$acct - SPNs: $spnCount, Password Set: $($user.PasswordLastSet)"
+      }
+
+- name: Verify Kerberoasting prerequisites
+  ansible.windows.win_powershell:
+    script: |
+      # List all SPNs in the domain for verification
+      $spnUsers = Get-ADUser -Filter {ServicePrincipalName -ne "$null"} -Properties ServicePrincipalNames
+      foreach ($user in $spnUsers) {
+        Write-Output "User: $($user.SamAccountName) - SPNs: $($user.ServicePrincipalNames -join ', ')"
+      }

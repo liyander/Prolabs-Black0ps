@@ -1,0 +1,148 @@
+---
+# =============================================================================
+# Role: ad-cs
+# Purpose: Install AD Certificate Services with vulnerable templates (ESC1/ESC8)
+# =============================================================================
+
+- name: Install AD Certificate Services
+  ansible.windows.win_feature:
+    name:
+      - Adcs-Cert-Authority
+      - Adcs-Web-Enrollment
+      - Adcs-Enroll-Web-Svc
+    state: present
+    include_management_tools: yes
+  register: adcs_feature
+
+- name: Reboot after ADCS installation
+  ansible.windows.win_reboot:
+    reboot_timeout: 600
+  when: adcs_feature.reboot_required
+
+- name: Configure Enterprise Root CA
+  ansible.windows.win_powershell:
+    script: |
+      try {
+        $ca = Get-CertificationAuthority -ErrorAction Stop
+        Write-Output "CA already configured"
+      } catch {
+        Install-AdcsCertificationAuthority `
+          -CAType EnterpriseRootCA `
+          -CACommonName "{{ domain_netbios }}-CA" `
+          -KeyLength 2048 `
+          -HashAlgorithm SHA256 `
+          -CryptoProviderName "RSA#Microsoft Software Key Storage Provider" `
+          -ValidityPeriod Years `
+          -ValidityPeriodUnits 10 `
+          -Force
+        Write-Output "Enterprise Root CA installed"
+      }
+  ignore_errors: yes
+
+- name: Configure Web Enrollment (ESC8 prerequisite)
+  ansible.windows.win_powershell:
+    script: |
+      try {
+        Install-AdcsWebEnrollment -Force
+        Write-Output "Web Enrollment configured"
+      } catch {
+        Write-Output "Web Enrollment may already be configured: $_"
+      }
+  ignore_errors: yes
+
+- name: Enable NTLM authentication on CertSrv (ESC8)
+  ansible.windows.win_powershell:
+    script: |
+      # Enable NTLM on the web enrollment endpoint for ESC8 relay attacks
+      Import-Module WebAdministration -ErrorAction SilentlyContinue
+
+      # Ensure HTTP endpoint is accessible (no HTTPS enforcement for relay)
+      Set-WebConfigurationProperty `
+        -Filter "/system.webServer/security/authentication/windowsAuthentication" `
+        -Name "enabled" `
+        -Value $true `
+        -PSPath "IIS:\Sites\Default Web Site\CertSrv"
+
+      Set-WebConfigurationProperty `
+        -Filter "/system.webServer/security/authentication/anonymousAuthentication" `
+        -Name "enabled" `
+        -Value $false `
+        -PSPath "IIS:\Sites\Default Web Site\CertSrv"
+
+      # Disable Extended Protection for Authentication (enables relay)
+      Set-WebConfigurationProperty `
+        -Filter "/system.webServer/security/authentication/windowsAuthentication/extendedProtection" `
+        -Name "tokenChecking" `
+        -Value "None" `
+        -PSPath "IIS:\Sites\Default Web Site\CertSrv"
+
+      Write-Output "ESC8: NTLM relay-friendly configuration applied"
+  ignore_errors: yes
+
+# ---- ESC1: Create vulnerable certificate template ----
+- name: Create ESC1 Vulnerable Template (Enrollee Supplies Subject)
+  ansible.windows.win_powershell:
+    script: |
+      # Duplicate the WebServer template with dangerous permissions
+      $configContext = ([ADSI]"LDAP://RootDSE").configurationNamingContext
+      $templateContainer = "CN=Certificate Templates,CN=Public Key Services,CN=Services,$configContext"
+
+      # Check if template already exists
+      $existingTemplate = [ADSI]"LDAP://CN={{ adcs_templates.esc1.name }},$templateContainer"
+      if ($existingTemplate.Name) {
+        Write-Output "ESC1 template already exists"
+        return
+      }
+
+      # Get the WebServer template to duplicate
+      $webServerTemplate = [ADSI]"LDAP://CN=WebServer,$templateContainer"
+
+      # Create new template
+      $newTemplate = ([ADSI]"LDAP://$templateContainer").Create("pKICertificateTemplate", "CN={{ adcs_templates.esc1.name }}")
+
+      # Copy properties from WebServer
+      $newTemplate.Put("displayName", "{{ adcs_templates.esc1.name }}")
+      $newTemplate.Put("flags", 131680)  # CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT + CT_FLAG_AUTO_ENROLLMENT
+
+      # ESC1: Allow enrollee to specify Subject Alternative Name
+      $newTemplate.Put("msPKI-Certificate-Name-Flag", 1)  # ENROLLEE_SUPPLIES_SUBJECT
+      $newTemplate.Put("msPKI-Enrollment-Flag", 0)        # No manager approval
+      $newTemplate.Put("msPKI-RA-Signature", 0)           # No authorized signatures required
+
+      # Set enrollment permissions to Domain Users (ESC1 vulnerability)
+      $newTemplate.Put("pKIExtendedKeyUsage", @("1.3.6.1.5.5.7.3.2", "1.3.6.1.5.5.7.3.1"))
+      $newTemplate.SetInfo()
+
+      # Grant Domain Users enrollment rights
+      $domainUsersSID = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-21-$((Get-ADDomain).DomainSID.Value.Split('-')[4..6] -join '-')-513")
+      $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
+        [System.Security.Principal.IdentityReference](New-Object System.Security.Principal.NTAccount("{{ domain_netbios }}\Domain Users")),
+        [System.DirectoryServices.ActiveDirectoryRights]::ExtendedRight,
+        [System.Security.AccessControl.AccessControlType]::Allow,
+        [guid]"0e10c968-78fb-11d2-90d4-00c04f79dc55"  # Certificate-Enrollment
+      )
+      $newTemplate.ObjectSecurity.AddAccessRule($ace)
+      $newTemplate.CommitChanges()
+
+      Write-Output "ESC1 template '{{ adcs_templates.esc1.name }}' created with ENROLLEE_SUPPLIES_SUBJECT"
+  ignore_errors: yes
+
+- name: Publish ESC1 template to CA
+  ansible.windows.win_powershell:
+    script: |
+      try {
+        certutil -setcatemplates +{{ adcs_templates.esc1.name }}
+        Write-Output "ESC1 template published to CA"
+      } catch {
+        Write-Output "Error publishing ESC1 template: $_"
+      }
+  ignore_errors: yes
+
+- name: Verify ADCS configuration
+  ansible.windows.win_powershell:
+    script: |
+      $templates = certutil -catemplates 2>$null
+      $ca = certutil -config - -ping 2>$null
+      Write-Output "ADCS Configuration Complete"
+      Write-Output "Published Templates:"
+      Write-Output $templates

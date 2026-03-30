@@ -1,0 +1,197 @@
+---
+# =============================================================================
+# Role: monitoring
+# Target: MON01-LINUX (172.16.50.40)
+# Purpose: Deploy monitoring stack with cleartext LDAP bind creds in config
+# =============================================================================
+
+- name: Install monitoring prerequisites
+  ansible.builtin.apt:
+    name:
+      - apache2
+      - php
+      - php-ldap
+      - php-mysql
+      - php-curl
+      - php-gd
+      - php-xml
+      - libapache2-mod-php
+      - snmp
+      - snmpd
+      - nagios-nrpe-server
+      - python3
+      - python3-pip
+    state: present
+    update_cache: yes
+  ignore_errors: yes
+
+- name: Start Apache
+  ansible.builtin.systemd:
+    name: apache2
+    state: started
+    enabled: yes
+
+# ---- Deploy fake monitoring dashboard ----
+- name: Create monitoring web application
+  ansible.builtin.file:
+    path: /var/www/html/monitoring
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: '0755'
+
+- name: Deploy monitoring dashboard
+  ansible.builtin.copy:
+    dest: /var/www/html/monitoring/index.php
+    content: |
+      <!DOCTYPE html>
+      <html>
+      <head>
+          <title>Corp Network Monitoring</title>
+          <style>
+              body { font-family: Arial, sans-serif; background: #1a1a2e; color: #eee; margin: 0; padding: 20px; }
+              .header { background: #16213e; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+              .header h1 { color: #0f3460; margin: 0; }
+              .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; }
+              .card { background: #16213e; border-radius: 8px; padding: 20px; border-left: 4px solid #e94560; }
+              .card.up { border-left-color: #4ecca3; }
+              .status { font-size: 24px; font-weight: bold; }
+              .status.up { color: #4ecca3; }
+              .status.down { color: #e94560; }
+              .login-form { max-width: 400px; margin: 50px auto; background: #16213e; padding: 30px; border-radius: 8px; }
+              input { width: 100%; padding: 10px; margin: 8px 0; box-sizing: border-box; background: #1a1a2e; border: 1px solid #333; color: #eee; border-radius: 4px; }
+              button { width: 100%; padding: 12px; background: #e94560; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
+          </style>
+      </head>
+      <body>
+          <?php
+          session_start();
+          if (!isset($_SESSION['authenticated'])) {
+              if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+                  // VULN: Hardcoded credentials
+                  if ($_POST['username'] === 'admin' && $_POST['password'] === 'MonDashboard@2024') {
+                      $_SESSION['authenticated'] = true;
+                      header('Location: /monitoring/');
+                      exit;
+                  }
+                  echo '<p style="color:red;text-align:center">Invalid credentials</p>';
+              }
+              ?>
+              <div class="login-form">
+                  <h2 style="text-align:center">Corp Monitoring Login</h2>
+                  <form method="POST">
+                      <input type="text" name="username" placeholder="Username" required>
+                      <input type="password" name="password" placeholder="Password" required>
+                      <button type="submit">Login</button>
+                  </form>
+              </div>
+              <?php exit; } ?>
+
+          <div class="header">
+              <h1>🖥️ Corp Network Monitoring Dashboard</h1>
+              <p>Last updated: <?php echo date('Y-m-d H:i:s'); ?></p>
+          </div>
+          <div class="grid">
+              <?php
+              $hosts = [
+                  ['DC01', '172.16.50.10', 'Domain Controller'],
+                  ['FS01', '172.16.50.11', 'File Server'],
+                  ['DB01', '172.16.50.12', 'Database Server'],
+                  ['APP01', '172.16.50.13', 'Application Server'],
+                  ['WS01', '172.16.50.21', 'Workstation 1'],
+                  ['WS02', '172.16.50.22', 'Workstation 2'],
+                  ['DEV-LNX01', '172.16.50.30', 'Dev Server'],
+                  ['DMZ-WEB01', '192.168.50.10', 'Web Server'],
+                  ['DMZ-MAIL01', '192.168.50.11', 'Mail Server'],
+              ];
+              foreach ($hosts as $host) {
+                  $up = rand(0, 10) > 1;
+                  $class = $up ? 'up' : '';
+                  $status = $up ? 'UP' : 'DOWN';
+                  $statusClass = $up ? 'up' : 'down';
+                  echo "<div class='card $class'>";
+                  echo "<h3>{$host[0]}</h3>";
+                  echo "<p>{$host[2]}</p>";
+                  echo "<p>IP: {$host[1]}</p>";
+                  echo "<p class='status $statusClass'>● $status</p>";
+                  echo "</div>";
+              }
+              ?>
+          </div>
+          <!-- Config: /etc/corp-monitoring/ldap.conf -->
+      </body>
+      </html>
+    owner: www-data
+    group: www-data
+    mode: '0644'
+
+# ---- VULNERABILITY: Cleartext LDAP credentials in /etc/ ----
+- name: Create monitoring config directory
+  ansible.builtin.file:
+    path: /etc/corp-monitoring
+    state: directory
+    mode: '0755'
+
+- name: Place LDAP bind credentials in cleartext config
+  ansible.builtin.copy:
+    dest: /etc/corp-monitoring/ldap.conf
+    content: |
+      # Corp Monitoring - LDAP Configuration
+      # Used for Active Directory user enumeration and monitoring
+      # Last modified: 2024-01-15 by admin
+
+      [ldap]
+      server   = 172.16.50.10
+      port     = 389
+      use_ssl  = false
+      base_dn  = DC=corp,DC=local
+
+      # Service account for LDAP bind
+      bind_dn  = CN=svc_monitoring,OU=Service Accounts,DC=corp,DC=local
+      bind_pw  = M0nitor!ng2024
+
+      # Search filters
+      user_filter   = (&(objectClass=user)(objectCategory=person))
+      group_filter  = (objectClass=group)
+      computer_filter = (objectClass=computer)
+
+      # Monitored OUs
+      search_base[] = OU=Corp Users,DC=corp,DC=local
+      search_base[] = OU=Servers,DC=corp,DC=local
+      search_base[] = OU=Service Accounts,DC=corp,DC=local
+    mode: '0644'
+    owner: root
+    group: root
+
+- name: Place backup LDAP config in home directory
+  ansible.builtin.copy:
+    dest: /opt/.ldap-backup.conf
+    content: |
+      # Backup LDAP configuration
+      LDAP_HOST=172.16.50.10
+      LDAP_USER=svc_monitoring@corp.local
+      LDAP_PASS=M0nitor!ng2024
+      LDAP_BASE=DC=corp,DC=local
+    mode: '0644'
+    owner: root
+    group: root
+
+# ---- Configure Apache for monitoring ----
+- name: Configure monitoring VirtualHost
+  ansible.builtin.copy:
+    dest: /etc/apache2/sites-available/monitoring.conf
+    content: |
+      <VirtualHost *:80>
+          ServerName mon01.corp.local
+          DocumentRoot /var/www/html/monitoring
+          <Directory /var/www/html/monitoring>
+              AllowOverride All
+              Require all granted
+          </Directory>
+      </VirtualHost>
+
+- name: Enable monitoring site
+  ansible.builtin.shell: |
+    a2ensite monitoring.conf
+    a2dissite 000-default.conf
+    systemctl reload apache2

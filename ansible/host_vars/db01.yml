@@ -1,0 +1,110 @@
+---
+# =============================================================================
+# DB01-WIN2019 - Database Server (MSSQL)
+# =============================================================================
+# Role:        MSSQL Server with xp_cmdshell enabled
+# OS:          Windows Server 2019
+# Network:     Internal (172.16.50.12)
+# Attack Path: Phase C, Step 6 (MSSQL Abuse)
+# =============================================================================
+
+hostname: DB01
+machine_role: database_server
+attack_phase: "C6"
+attack_name: "MSSQL xp_cmdshell Exploitation"
+
+# Network
+ansible_host: 172.16.50.12
+ansible_connection: winrm
+ansible_winrm_transport: ntlm
+ansible_winrm_server_cert_validation: ignore
+ansible_port: 5986
+ansible_winrm_scheme: https
+network_segment: internal
+gateway: 172.16.50.1
+
+# OS
+os_family: windows
+os_version: "Windows Server 2019"
+
+# Services
+services:
+  - name: "MSSQL$SQLEXPRESS"
+    port: 1433
+    protocol: tcp
+    description: "SQL Server Express 2019"
+    start_mode: auto
+  - name: SQLBrowser
+    port: 1434
+    protocol: udp
+    description: "SQL Server Browser"
+    start_mode: auto
+
+# MSSQL Configuration
+mssql:
+  instance_name: "SQLEXPRESS"
+  edition: "Express"
+  version: "2019"
+  auth_mode: "Mixed"  # SQL + Windows auth
+  tcp_port: 1433
+  accounts:
+    sa:
+      password: "SqlServer@2024!"
+      sysadmin: true
+    dbadmin:
+      password: "SqlServer@2024!"
+      sysadmin: true
+    domain_svc:
+      name: 'CORP\svc_mssql'
+      sysadmin: true
+  databases:
+    - name: CorpDB
+      tables:
+        - name: employees
+          description: "Contains cleartext user passwords"
+  dangerous_features:
+    xp_cmdshell: enabled
+    ole_automation: enabled
+
+# Vulnerabilities
+vulnerabilities:
+  xp_cmdshell:
+    type: "OS Command Execution via MSSQL"
+    vector: "xp_cmdshell enabled with sysadmin access"
+    severity: critical
+    cvss: 9.8
+    exploit: "EXEC xp_cmdshell 'whoami'"
+    description: "sysadmin can execute arbitrary OS commands"
+  weak_sa:
+    type: "Weak SA Password"
+    vector: "SA account uses crackable password"
+    severity: high
+    password: "SqlServer@2024!"
+  kerberoastable:
+    type: "Kerberoastable Service Account"
+    vector: "svc_mssql has SPN and crackable password"
+    severity: high
+    spn: "MSSQLSvc/DB01.corp.local:1433"
+    password: "SQLServiceP@ss1"
+  cleartext_data:
+    type: "Cleartext Sensitive Data"
+    vector: "CorpDB.employees table contains plaintext passwords"
+    severity: medium
+
+# CTF Flags
+flags:
+  user:
+    value: "black0ps{mssql_sh3ll_4cc3ss}"
+    path: 'C:\Users\Public\user.txt'
+    owner: Public
+    permissions: "readable"
+  root:
+    value: "black0ps{xp_cmdsh3ll_syst3m}"
+    path: 'C:\Users\Administrator\Desktop\root.txt'
+    owner: Administrator
+    permissions: "admin_only"
+
+# Resource allocation
+vm_memory: 4096
+vm_cpus: 2
+vm_gui: true

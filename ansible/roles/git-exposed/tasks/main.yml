@@ -1,0 +1,202 @@
+---
+# =============================================================================
+# Role: git-exposed
+# Target: DEV-LINUX01 (172.16.50.30)
+# Purpose: Expose .git directory via HTTP with hardcoded AD credentials
+# =============================================================================
+
+- name: Install packages
+  ansible.builtin.apt:
+    name:
+      - apache2
+      - git
+      - python3
+      - python3-pip
+      - php
+      - libapache2-mod-php
+    state: present
+    update_cache: yes
+
+- name: Create web application directory
+  ansible.builtin.file:
+    path: /var/www/html/corp-portal
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: '0755'
+
+# ---- Create fake corporate portal with .git repo ----
+- name: Initialize git repository in web root
+  ansible.builtin.shell: |
+    cd /var/www/html/corp-portal
+    git init
+    git config user.email "r.martinez@corp.local"
+    git config user.name "Robert Martinez"
+  args:
+    creates: /var/www/html/corp-portal/.git
+
+- name: Create initial web application files
+  ansible.builtin.copy:
+    dest: "/var/www/html/corp-portal/{{ item.name }}"
+    content: "{{ item.content }}"
+    owner: www-data
+    group: www-data
+    mode: '0644'
+  loop:
+    - name: index.php
+      content: |
+        <!DOCTYPE html>
+        <html>
+        <head><title>Corp Development Portal</title></head>
+        <body>
+        <h1>Corp Internal Development Portal</h1>
+        <p>Welcome to the Corp development environment.</p>
+        <p>Status: <span style="color:green">Online</span></p>
+        <?php echo "<!-- Server: " . gethostname() . " -->"; ?>
+        </body>
+        </html>
+
+    - name: config.php
+      content: |
+        <?php
+        // Database configuration - LOCAL DEV ONLY
+        $db_host = "localhost";
+        $db_name = "corp_dev";
+        $db_user = "devuser";
+        $db_pass = "devpass123";
+
+        // Application settings
+        $app_name = "Corp Portal";
+        $app_version = "2.1.0";
+        $debug_mode = true;
+        ?>
+
+    - name: README.md
+      content: |
+        # Corp Development Portal
+        Internal development portal for Corp IT team.
+        ## Setup
+        1. Clone this repo
+        2. Configure config.php
+        3. Run with Apache/PHP
+
+- name: Make initial git commit
+  ansible.builtin.shell: |
+    cd /var/www/html/corp-portal
+    git add -A
+    git commit -m "Initial portal setup" --allow-empty
+  ignore_errors: yes
+
+# ---- VULNERABILITY: Commit with hardcoded AD credentials ----
+- name: Create config file with AD credentials (will be in git history)
+  ansible.builtin.copy:
+    dest: /var/www/html/corp-portal/ldap-config.php
+    content: |
+      <?php
+      // LDAP/AD Configuration for user authentication
+      // TODO: Move to environment variables before production
+
+      $ldap_config = array(
+          'host'     => '172.16.50.10',
+          'port'     => 389,
+          'base_dn'  => 'DC=corp,DC=local',
+          'bind_dn'  => 'CN=Robert Martinez,OU=Dev,OU=Corp Users,DC=corp,DC=local',
+          'bind_pw'  => 'Robert2024!',
+
+          // Service account for automated tasks
+          'svc_user' => 'svc_webapp@corp.local',
+          'svc_pass' => 'W3bApp!Service',
+      );
+
+      // Internal API endpoints
+      $api_config = array(
+          'dc_endpoint'  => 'http://172.16.50.10:5985/wsman',
+          'db_endpoint'  => 'http://172.16.50.12:1433',
+          'app_endpoint' => 'http://172.16.50.13:8080',
+      );
+      ?>
+    owner: www-data
+    group: www-data
+    mode: '0644'
+
+- name: Commit AD credentials to git history
+  ansible.builtin.shell: |
+    cd /var/www/html/corp-portal
+    git add -A
+    git commit -m "Add LDAP authentication configuration"
+  ignore_errors: yes
+
+# ---- Now "remove" the credentials (but they remain in git history) ----
+- name: Create sanitized config (credentials removed from working tree)
+  ansible.builtin.copy:
+    dest: /var/www/html/corp-portal/ldap-config.php
+    content: |
+      <?php
+      // LDAP/AD Configuration
+      // Credentials moved to environment variables - see deployment docs
+
+      $ldap_config = array(
+          'host'     => getenv('LDAP_HOST'),
+          'port'     => 389,
+          'base_dn'  => getenv('LDAP_BASE_DN'),
+          'bind_dn'  => getenv('LDAP_BIND_DN'),
+          'bind_pw'  => getenv('LDAP_BIND_PW'),
+      );
+      ?>
+    owner: www-data
+    group: www-data
+    mode: '0644'
+
+- name: Commit credential removal
+  ansible.builtin.shell: |
+    cd /var/www/html/corp-portal
+    git add -A
+    git commit -m "Security: move credentials to environment variables"
+  ignore_errors: yes
+
+# ---- Apache Configuration (serves .git directory) ----
+- name: Configure Apache to serve dev portal (including .git!)
+  ansible.builtin.copy:
+    dest: /etc/apache2/sites-available/corp-portal.conf
+    content: |
+      <VirtualHost *:80>
+          ServerName dev-linux01.corp.local
+          DocumentRoot /var/www/html/corp-portal
+
+          <Directory /var/www/html/corp-portal>
+              Options Indexes FollowSymLinks
+              AllowOverride None
+              Require all granted
+          </Directory>
+
+          # VULNERABILITY: .git directory is NOT blocked
+          # Normally you would add:
+          # <DirectoryMatch "^/.*/\.git/">
+          #     Deny from all
+          # </DirectoryMatch>
+
+          ErrorLog ${APACHE_LOG_DIR}/corp-portal-error.log
+          CustomLog ${APACHE_LOG_DIR}/corp-portal-access.log combined
+      </VirtualHost>
+
+- name: Enable corp-portal site
+  ansible.builtin.shell: |
+    a2ensite corp-portal.conf
+    a2dissite 000-default.conf
+    a2enmod rewrite
+    systemctl reload apache2
+
+- name: Ensure .git directory is readable by Apache
+  ansible.builtin.file:
+    path: /var/www/html/corp-portal/.git
+    owner: www-data
+    group: www-data
+    recurse: yes
+    mode: '0755'
+
+# ---- Privilege Escalation ----
+- name: Create SUID find binary copy
+  ansible.builtin.shell: |
+    cp /usr/bin/find /usr/local/bin/corp-search
+    chmod u+s /usr/local/bin/corp-search
+    chown root:root /usr/local/bin/corp-search

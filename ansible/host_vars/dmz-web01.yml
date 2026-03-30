@@ -1,0 +1,100 @@
+---
+# =============================================================================
+# DMZ-WEB01 - Vulnerable CMS Web Server
+# =============================================================================
+# Role:        Initial access point (RCE/SSRF via WordPress)
+# OS:          Ubuntu 22.04 LTS
+# Network:     DMZ (192.168.50.10)
+# Attack Path: Phase A, Step 1 (Perimeter Breach)
+# =============================================================================
+
+hostname: dmz-web01
+machine_role: webserver
+attack_phase: "A1"
+attack_name: "Initial Access - CMS Exploitation"
+
+# Network
+ansible_host: 192.168.50.10
+ansible_connection: ssh
+ansible_become: true
+ansible_become_method: sudo
+network_segment: dmz
+gateway: 192.168.50.1
+
+# OS
+os_family: linux
+os_distro: ubuntu
+os_version: "22.04"
+
+# Services
+services:
+  - name: apache2
+    port: 80
+    protocol: tcp
+    description: "Apache HTTP Server (WordPress)"
+  - name: mysql
+    port: 3306
+    protocol: tcp
+    description: "MariaDB (WordPress backend)"
+    bind_address: "127.0.0.1"
+
+# Vulnerabilities
+vulnerabilities:
+  rce:
+    type: "Remote Code Execution"
+    vector: "Unauthenticated file upload via corp-file-manager plugin"
+    severity: critical
+    cvss: 9.8
+    endpoint: "/wp-admin/admin-ajax.php?action=corp_upload"
+  ssrf:
+    type: "Server-Side Request Forgery"
+    vector: "URL fetch endpoint with no validation"
+    severity: high
+    cvss: 7.5
+    endpoint: "/wp-admin/admin-ajax.php?action=corp_fetch&url="
+  privesc_suid:
+    type: "SUID Binary Abuse"
+    vector: "PATH hijacking via /usr/local/bin/corp-backup"
+    severity: high
+  privesc_cron:
+    type: "Cron Wildcard Injection"
+    vector: "Root cron uses tar with wildcard in uploads directory"
+    severity: high
+  privesc_writable:
+    type: "Writable Root Script"
+    vector: "/opt/corp-maintenance.sh is world-writable and run by root cron"
+    severity: high
+
+# CMS Configuration
+cms_type: wordpress
+cms_version: "5.7"
+cms_db_name: wordpress
+cms_db_user: wpuser
+cms_db_password: "Wp@Vulnerable2024!"
+cms_admin_user: admin
+cms_admin_password: "CmsAdmin@2024!"
+
+# Password reuse (links to DMZ-MAIL01)
+reused_credentials:
+  - target_host: dmz-mail01
+    username: backup
+    password: "CmsAdmin@2024!"
+    file_location: "/var/www/html/wordpress/.wp-credentials.bak"
+
+# CTF Flags
+flags:
+  user:
+    value: "black0ps{dmz_w3b_f00th0ld_4ch13v3d}"
+    path: "/home/www-data/user.txt"
+    owner: www-data
+    permissions: "0644"
+  root:
+    value: "black0ps{dmz_w3b_r00t_pwn3d}"
+    path: "/root/root.txt"
+    owner: root
+    permissions: "0600"
+
+# Resource allocation
+vm_memory: 2048
+vm_cpus: 2
+vm_gui: false

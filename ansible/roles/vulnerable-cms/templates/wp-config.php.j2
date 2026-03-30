@@ -1,0 +1,34 @@
+<?php
+define( 'DB_NAME', 'wordpress' );
+define( 'DB_USER', 'wpuser' );
+define( 'DB_PASSWORD', 'Wp@Vulnerable2024!' );
+define( 'DB_HOST', 'localhost' );
+define( 'DB_CHARSET', 'utf8mb4' );
+define( 'DB_COLLATE', '' );
+
+define( 'AUTH_KEY',         'prolab-insecure-key-1' );
+define( 'SECURE_AUTH_KEY',  'prolab-insecure-key-2' );
+define( 'LOGGED_IN_KEY',    'prolab-insecure-key-3' );
+define( 'NONCE_KEY',        'prolab-insecure-key-4' );
+define( 'AUTH_SALT',        'prolab-insecure-salt-1' );
+define( 'SECURE_AUTH_SALT', 'prolab-insecure-salt-2' );
+define( 'LOGGED_IN_SALT',   'prolab-insecure-salt-3' );
+define( 'NONCE_SALT',       'prolab-insecure-salt-4' );
+
+$table_prefix = 'wp_';
+
+// VULN: Debug mode enabled - information disclosure
+define( 'WP_DEBUG', true );
+define( 'WP_DEBUG_LOG', true );
+define( 'WP_DEBUG_DISPLAY', true );
+
+// VULN: Allow unfiltered HTML
+define( 'DISALLOW_UNFILTERED_HTML', false );
+
+// VULN: Allow file editing from admin panel
+define( 'DISALLOW_FILE_EDIT', false );
+
+if ( ! defined( 'ABSPATH' ) ) {
+    define( 'ABSPATH', __DIR__ . '/' );
+}
+require_once ABSPATH . 'wp-settings.php';
