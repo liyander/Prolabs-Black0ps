@@ -283,14 +283,16 @@ validate_prerequisites() {
 # =============================================================================
 
 install_ansible_collections() {
-    log STEP "Installing required Ansible collections..."
+    log STEP "Installing required Ansible collections (checking logs/ansible-galaxy.log for details)..."
 
-    ansible-galaxy collection install community.windows --force 2>&1 | tail -1
-    ansible-galaxy collection install ansible.windows --force 2>&1 | tail -1
-    ansible-galaxy collection install community.mysql --force 2>&1 | tail -1
-    ansible-galaxy collection install community.general --force 2>&1 | tail -1
+    {
+        ansible-galaxy collection install community.windows --force || true
+        ansible-galaxy collection install ansible.windows --force || true
+        ansible-galaxy collection install community.mysql --force || true
+        ansible-galaxy collection install community.general --force || true
+    } >> "${LOG_DIR}/ansible-galaxy.log" 2>&1
 
-    log SUCCESS "Ansible collections installed"
+    log SUCCESS "Ansible collections installation attempted"
 }
 
 # =============================================================================
