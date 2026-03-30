@@ -312,9 +312,26 @@ provision_vm() {
         (cd "${VAGRANT_DIR}" && vagrant provision "${vm_name}") 2>&1 | tee "${LOG_DIR}/${vm_name}.log"
     else
         log INFO "Downloading boxes and starting ${vm_name} (progress shown below)..."
-        (cd "${VAGRANT_DIR}" && vagrant up "${vm_name}" --no-parallel) 2>&1 | tee "${LOG_DIR}/${vm_name}.log"
+        local max_attempts=3
+        local attempt=1
+        while [[ ${attempt} -le ${max_attempts} ]]; do
+            if [[ ${attempt} -gt 1 ]]; then
+                log INFO "Retry attempt ${attempt}/${max_attempts} for ${vm_name} (Resuming download)..."
+            fi
+            (cd "${VAGRANT_DIR}" && vagrant up "${vm_name}" --no-parallel) 2>&1 | tee "${LOG_DIR}/${vm_name}.log"
+            ec=${PIPESTATUS[0]}
+            
+            if [[ ${ec} -eq 0 ]]; then
+                break
+            fi
+            
+            if [[ ${attempt} -lt ${max_attempts} ]]; then
+                log WARN "Provisioning ${vm_name} failed. Retrying in 10 seconds to bypass network timeouts..."
+                sleep 10
+            fi
+            ((attempt++))
+        done
     fi
-    local ec=${PIPESTATUS[0]}
     set -e
 
     if [[ ${ec} -ne 0 ]]; then
