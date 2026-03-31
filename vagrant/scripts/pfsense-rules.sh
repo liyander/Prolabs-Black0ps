@@ -24,6 +24,12 @@ echo "[*] Configuring pfSense firewall rules..."
 # ---- Enable IP Forwarding ----
 sysctl net.inet.ip.forwarding=1
 
+# ---- Enable and Start PF (Packet Filter) ----
+echo "[*] Ensuring PF kernel module is loaded..."
+kldload pf 2>/dev/null || true
+sysrc pf_enable="YES"
+service pf start 2>/dev/null || true
+
 # ---- Flush existing rules ----
 pfctl -F all 2>/dev/null || true
 
