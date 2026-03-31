@@ -64,11 +64,13 @@ scrub in all
 
 # ---- NAT (not needed for internal lab, but kept for flexibility) ----
 
-# ---- Filter Rules ----
-
 # Always pass SSH to prevent script suicide
 pass out quick proto tcp from any to any port 22
 pass in quick proto tcp from any to any port 22
+
+# TEMPORARY FIREWALL BYPASS FOR ANSIBLE DEPLOYMENT
+pass in quick all
+pass out quick all
 
 
 # Default: block everything and log
