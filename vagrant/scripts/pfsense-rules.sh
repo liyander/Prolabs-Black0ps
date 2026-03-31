@@ -68,8 +68,9 @@ pass quick on lo0 all
 pass in  on $wan_if from $attacker_net to $dmz_net
 pass out on $dmz_if from $attacker_net to $dmz_net
 
-# ---- RULE 2: BLOCK Attacker -> Internal (critical isolation) ----
-block in quick on $wan_if from $attacker_net to $internal_net
+# ---- RULE 2: Temporarily allow Attacker -> Internal for Ansible deployment ----
+pass in quick on $wan_if from $attacker_net to $internal_net
+# block in quick on $wan_if from $attacker_net to $internal_net
 
 # ---- RULE 3: Allow DMZ -> Internal (specific ports only) ----
 # TCP services
