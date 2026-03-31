@@ -231,9 +231,9 @@ Vagrant.configure("2") do |config|
     SHELL
   end
 
-  # ---- APP01-WIN2016: Application Server ----
+  # ---- APP01-WIN2019: Application Server ----
   config.vm.define "app01" do |app|
-    app.vm.box = BOX_WIN2016
+    app.vm.box = BOX_WIN2019
     app.vm.hostname = "APP01"
     app.vm.communicator = "winrm"
     app.winrm.username = "vagrant"
