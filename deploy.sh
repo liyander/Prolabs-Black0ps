@@ -312,7 +312,7 @@ provision_vm() {
         (cd "${VAGRANT_DIR}" && vagrant provision "${vm_name}") 2>&1 | tee "${LOG_DIR}/${vm_name}.log"
     else
         log INFO "Downloading boxes and starting ${vm_name} (progress shown below)..."
-        local max_attempts=3
+        local max_attempts=10
         local attempt=1
         while [[ ${attempt} -le ${max_attempts} ]]; do
             if [[ ${attempt} -gt 1 ]]; then
