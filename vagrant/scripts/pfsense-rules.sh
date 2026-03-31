@@ -19,8 +19,6 @@
 
 set -e
 
-echo "[*] Configuring pfSense firewall rules..."
-
 # ---- Enable IP Forwarding ----
 sysctl net.inet.ip.forwarding=1
 
@@ -28,9 +26,9 @@ sysctl net.inet.ip.forwarding=1
 echo "[*] Ensuring PF kernel module is loaded..."
 kldload pf 2>/dev/null || true
 sysrc pf_enable="YES"
-service pf start 2>/dev/null || true
 
 # ---- Flush existing rules ----
+pfctl -d 2>/dev/null || true
 pfctl -F all 2>/dev/null || true
 
 # ---- Create PF ruleset ----
@@ -44,9 +42,13 @@ attacker_net = "10.10.10.0/24"
 dmz_net      = "192.168.50.0/24"
 internal_net = "172.16.50.0/24"
 
-wan_if  = "em0"
-dmz_if  = "em1"
-lan_if  = "em2"
+# Vagrant uses NAT for SSH. Usually em0 or vtnet0. We must skip it to not sever our connection.
+set skip on em0
+set skip on vtnet0
+
+wan_if  = "em1"
+dmz_if  = "em2"
+lan_if  = "em3"
 
 # Internal service ports accessible from DMZ
 dmz_to_internal_tcp = "{ 53, 88, 135, 139, 389, 445, 636, 1433, 3389, 5985, 5986, 80, 443, 8080, 8443 }"
@@ -63,6 +65,11 @@ scrub in all
 # ---- NAT (not needed for internal lab, but kept for flexibility) ----
 
 # ---- Filter Rules ----
+
+# Always pass SSH to prevent script suicide
+pass out quick proto tcp from any to any port 22
+pass in quick proto tcp from any to any port 22
+
 
 # Default: block everything and log
 block log all
