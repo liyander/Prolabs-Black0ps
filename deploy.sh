@@ -428,6 +428,10 @@ phase2_domain_setup() {
     local failed=0
 
     # Wait for DC to be reachable
+    log STEP "Applying static Host routes for VirtualBox networks..."
+    sudo ip route add 192.168.50.0/24 via 10.10.10.1 2>/dev/null || true
+    sudo ip route add 172.16.50.0/24 via 10.10.10.1 2>/dev/null || true
+    
     log STEP "Waiting for Domain Controller to be reachable..."
     local retries=0
     while ! ansible -i "${ANSIBLE_DIR}/inventories/production/hosts.yml" dc01 -m win_ping &>/dev/null; do
