@@ -65,8 +65,7 @@ Vagrant.configure("2") do |config|
     # Interface em0: Attacker Network (WAN - 10.10.10.1)
     router.vm.network "private_network",
       ip: "#{ATTACKER_NET}.1",
-      netmask: "255.255.255.0",
-      virtualbox__intnet: "attacker_net"
+      netmask: "255.255.255.0"
 
     # Interface em1: DMZ Network (OPT1 - 192.168.50.1)
     router.vm.network "private_network",
